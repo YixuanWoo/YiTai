@@ -1,29 +1,24 @@
 // ============================================================
-// MainWindow.xaml.cs —— 主窗口行为（左原文 / 右整篇译稿）
+// MainWindow.xaml.cs —— 译台主窗口的全部交互
 // ============================================================
 //
-// 【保存的三条规矩】（跟"工作台"的写作台同一套）
-//   1. 停手 1.2 秒自动存（DispatcherTimer，每敲一个字重置）；
-//   2. Ctrl+S 立即存；
-//   3. 存前比指纹，磁盘被外部改过就二选一，**绝不静默覆盖**。
+// 这个文件只做"把界面动作翻译成 Core 调用"，自己不解析、不拼路径、
+// 不管目录布局（那些都在 YiTai.Core 里）。加新功能时优先加 Core 能力，
+// 界面只接线 —— 这样功能可以无限加，界面不会越写越乱。
 //
-// 【右边是一整篇，所以保存就是"原样写回"】
-//   不做任何按段落重组的加工 —— 你手写的空行、缩进、批注全部保留。
-//   回写时的换行/编码照原文件（第01章 CRLF、第02章 LF 都能原样还回去，
-//   见 Core\TextFile.cs 的说明）。
+// 落盘策略（四道保险）：
+//   1. 停手 AutoSaveDelayMs（默认 1.2s）后自动保存；
+//   2. Ctrl+S 立刻保存；
+//   3. 切源文件 / 关窗口前强制保存一次；
+//   4. 磁盘被别的程序改过 → 弹窗让用户选，不静默覆盖。
 //
-// 【左栏高亮是估算】
-//   源文没有分段信息，所以用"右栏光标在第几段"按比例映射到左栏句子。
-//   界面上写明了"估算"，不假装精确。
+// 空稿保护：译文全空时拒绝落盘（防一次误全选删除把整章清空）。
 // ============================================================
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.IO;
-using System.Linq;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -34,424 +29,514 @@ namespace YiTai.App;
 
 public partial class MainWindow : Window
 {
-    private DeskConfig _cfg;
-    private ChapterStore _store;
+    private readonly AppSettings _settings = AppSettings.Load();
+    private readonly DispatcherTimer _autoSave = new();
 
-    private readonly ObservableCollection<ChapterVm> _chapters = new();
-    private readonly ObservableCollection<SentenceVm> _sentenceView = new();
-    private readonly DispatcherTimer _auto;
+    private ProjectStore? _store;
+    private SourceEntry? _current;
+    private TranslationDoc? _doc;
 
-    private string _mdSha = "";
-    private bool _loading;
-    private bool _syncingList;
-    private bool _dirty;
-    private int _current;
-    private int _currentSentence = -1;
+    private bool _dirty;        // 有未保存的改动
+    private bool _loading;      // 正在程序性填内容，别把 TextChanged 当用户输入
 
-    public MainWindow(DeskConfig cfg)
+    public MainWindow()
     {
-        _cfg = cfg;
-        _store = new ChapterStore(cfg.ToPaths(), cfg.ToProfile());
-
         InitializeComponent();
 
-        Width = Math.Max(980, cfg.WindowWidth);
-        Height = Math.Max(620, cfg.WindowHeight);
+        Width = _settings.WindowWidth;
+        Height = _settings.WindowHeight;
+        if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
 
-        ListSentences.ItemsSource = _sentenceView;
-        ListChapters.ItemsSource = _chapters;
+        _autoSave.Tick += (_, _) => { _autoSave.Stop(); SaveNow(quiet: true); };
 
-        _auto = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
-        _auto.Tick += (_, __) =>
+        // 上次的项目：直接接着干；没有就留空，等人从菜单里新建/打开
+        if (_settings.LastProjectRoot.Length > 0 && File.Exists(ProjectLayout.ProjectFile(_settings.LastProjectRoot)))
         {
-            _auto.Stop();
-            SaveQuietly();
+            try
+            {
+                OpenProject(_settings.LastProjectRoot, _settings.LastSourceId);
+            }
+            catch
+            {
+                SetEmptyState();   // 项目被搬走/删了，不该让软件起不来
+            }
+        }
+        else
+        {
+            SetEmptyState();
+        }
+    }
+
+    // ================================================================ 项目管理
+
+    private void OnNewProject(object sender, RoutedEventArgs e) => NewProject();
+
+    private void OnOpenProject(object sender, RoutedEventArgs e) => OpenProjectDialog();
+
+    private void NewProject()
+    {
+        if (!ConfirmLeaveCurrent()) return;
+
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选一个文件夹作为项目根（会在里面建 sources / translations / backups）",
+            Multiselect = false,
         };
+        if (dlg.ShowDialog(this) != true) return;
 
-        Loaded += (_, __) => Boot();
-        PreviewKeyDown += OnKeyDown;
-    }
-
-    // ================================================================ 启动
-
-    private void Boot()
-    {
-        BuildChapterList();
-
-        int start = _cfg.LastChapter;
-        if (start < 1 || start > _cfg.ChapterCount) start = 1;
-
-        if (!_chapters.Any(c => c.Number == start))
-            start = _chapters.Count > 0 ? _chapters[0].Number : 1;
-
-        LoadChapter(start);
-    }
-
-    private void BuildChapterList()
-    {
-        _syncingList = true;
-        _chapters.Clear();
-
-        foreach (var b in _store.ScanAll(_cfg.ChapterCount))
-            _chapters.Add(new ChapterVm(b.Number, b.Title, b.Total) { Chars = b.Chars });
-
-        _syncingList = false;
-    }
-
-    // ================================================================ 打开一章
-
-    private void LoadChapter(int number)
-    {
-        if (_dirty) SaveQuietly();
-
-        LoadResult res;
         try
         {
-            res = _store.Load(number, DateTime.Now);
+            var store = ProjectStore.CreateNew(dlg.FolderName, Path.GetFileName(dlg.FolderName));
+            OpenProject(store.Root, null);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "这一章打不开：\n\n" + ex.Message, "打开章节",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
+            Warn("新建项目失败", ex.Message);
+        }
+    }
+
+    private void OpenProjectDialog()
+    {
+        if (!ConfirmLeaveCurrent()) return;
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "打开译台项目（选 project.json，或直接选项目文件夹里的它）",
+            Filter = "译台项目 (project.json)|project.json|所有文件 (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        try
+        {
+            OpenProject(Path.GetDirectoryName(dlg.FileName)!, null);
+        }
+        catch (Exception ex)
+        {
+            Warn("打开项目失败", ex.Message);
+        }
+    }
+
+    /// <summary>给外部（App 解析命令行/拖拽）用：从项目根打开。</summary>
+    public void OpenProjectFromOutside(string root)
+    {
+        if (!ConfirmLeaveCurrent()) return;
+        OpenProject(root, null);
+    }
+
+    /// <summary>装载一个项目：刷新标题、源文件下拉、默认选中上次那一份。</summary>
+    private void OpenProject(string rootOrProjectFile, string? wantSourceId)
+    {
+        _store = ProjectStore.Open(rootOrProjectFile);
+        _settings.LastProjectRoot = _store.Root;
+
+        Title = $"译台 — {_store.Meta.Name}";
+        TxtProject.Text = _store.Meta.Name;
+        TxtProjectPath.Text = _store.Root;
+
+        _loading = true;
+        CmbSources.ItemsSource = null;
+        CmbSources.ItemsSource = _store.Meta.Sources;
+        CmbSources.DisplayMemberPath = "FileName";
+        _loading = false;
+
+        bool hasSources = _store.Meta.Sources.Count > 0;
+        CmbSources.IsEnabled = hasSources;
+        TbxTranslation.IsEnabled = hasSources;
+        MiSave.IsEnabled = hasSources;
+        MiSaveAs.IsEnabled = hasSources;
+
+        if (!hasSources)
+        {
+            _current = null;
+            _doc = null;
+            SetPanesEmpty("这个项目还没有源文件。文件 → 导入源文件，选几个 md/txt 进来。");
             return;
         }
 
-        _current = number;
-        _mdSha = res.Md.Exists ? res.Md.Sha : "";
-        _currentSentence = -1;
-        _dirty = false;
+        string? id = wantSourceId ?? _store.Meta.LastSourceId;
+        SourceEntry entry = _store.Meta.Sources.Find(s => s.Id == id) ?? _store.Meta.Sources[0];
 
-        // ---- 左栏
-        _sentenceView.Clear();
-        for (int i = 0; i < res.State.Rows.Count; i++)
-            _sentenceView.Add(new SentenceVm(res.State.Rows[i], i));
-
-        TxtSrcHead.Text = $"英文原文　·　{_sentenceView.Count} 句";
-
-        // ---- 右栏：有译稿读进来，没有就给一份只有章名的空稿
         _loading = true;
-        TbxDoc.Text = res.Md.Exists && res.Md.Text.Trim().Length > 0
-            ? res.Md.Text.Replace("\r\n", "\n").Replace("\n", "\r\n")
-            : res.State.Title + "\r\n\r\n";
+        CmbSources.SelectedItem = entry;
+        _loading = false;
+        LoadSource(entry);
+    }
+
+    // ================================================================ 导入
+
+    private void OnImport(object sender, RoutedEventArgs e)
+    {
+        if (_store == null)
+        {
+            Warn("还没有项目", "先“新建项目”或“打开项目”，再导入源文件。");
+            return;
+        }
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "导入源文件（会复制进项目的 sources 文件夹；可多选）",
+            Filter = "文本 (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|所有文件 (*.*)|*.*",
+            Multiselect = true,
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        try
+        {
+            var added = _store.ImportFiles(dlg.FileNames);
+            if (added.Count == 0) return;
+
+            // 刷新下拉（ItemsSource 是同一个 List 实例，重新赋值才会重绘）
+            _loading = true;
+            CmbSources.ItemsSource = null;
+            CmbSources.ItemsSource = _store.Meta.Sources;
+            CmbSources.IsEnabled = true;
+            TbxTranslation.IsEnabled = true;
+            MiSave.IsEnabled = true;
+            MiSaveAs.IsEnabled = true;
+            CmbSources.SelectedItem = added[0];
+            _loading = false;
+
+            LoadSource(added[0]);
+            Status($"已导入 {added.Count} 个文件");
+        }
+        catch (Exception ex)
+        {
+            Warn("导入失败", ex.Message);
+        }
+    }
+
+    // ================================================================ 关联已有译文
+
+    /// <summary>
+    /// 迁移旧工作流用：源文件 ch01..ch27 + 旧译文 第01章..第27章，
+    /// 名字对不上但顺序一致，按顺序配对即可，不必一章章「另存为」。
+    /// </summary>
+    private void OnLinkTranslations(object sender, RoutedEventArgs e)
+    {
+        if (_store == null) { Warn("还没有项目", "先新建或打开一个项目。"); return; }
+        if (_store.Meta.Sources.Count == 0) { Warn("还没有源文件", "先导入源文件，再来关联译文。"); return; }
+
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选放旧译文的文件夹（按章号与源文件配对，配不准的会跳过）",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        (int n, List<int> skipped) = _store.LinkTranslationsByNumber(dlg.FolderName);
+
+        if (n == 0)
+        {
+            // 按章号配不上，退一步按顺序（仅当两边数量相等）
+            n = _store.LinkTranslationsByOrder(dlg.FolderName);
+            if (n == 0)
+            {
+                Warn("没能配对",
+                     $"源文件 {_store.Meta.Sources.Count} 份，但这个文件夹里没找到能对上的译文。\n" +
+                     "按章号对不上、数量也不相等，所以一份都没改。\n" +
+                     "可以先用「另存为」逐份指定。");
+                return;
+            }
+        }
+
+        string msg = $"已关联 {n} 份译文";
+        if (skipped.Count > 0)
+            msg += "；这些章号有多个候选，没替你猜：" + string.Join("、", skipped);
+        Status(msg);
+        if (_current != null) LoadSource(_current);
+    }
+
+    // ================================================================ 切换源文件
+
+    private void OnSourceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (CmbSources.SelectedItem is not SourceEntry entry) return;
+        if (_current != null && entry.Id == _current.Id) return;
+
+        // 切走之前先把上一份存掉（不然切一下就把刚写的丢了）
+        if (!SaveNow(quiet: false)) return;
+
+        LoadSource(entry);
+    }
+
+    /// <summary>把一份源文件连同它的译文装进界面。</summary>
+    private void LoadSource(SourceEntry entry)
+    {
+        _current = entry;
+        _settings.LastSourceId = entry.Id;
+        _store!.Meta.LastSourceId = entry.Id;
+        _store.Save();
+
+        var src = TextFile.Read(_store.SourcePath(entry));
+        string trPath = _store.TranslationPath(entry);
+        _doc = TranslationStore.Load(trPath);
+
+        _loading = true;
+        TbxSource.Text = src.Exists ? src.Text : "";
+        TbxTranslation.Text = _doc.TextLf;
         _loading = false;
 
-        TxtChapter.Text = res.State.Title;
-        TxtSub.Text = $"{Path.GetFileName(_store.Paths.SourcePath(number))}"
-                    + $"　·　{_sentenceView.Count} 句原文"
-                    + "　·　右边写一整篇译文";
-        TxtMdName.Text = Path.GetFileName(_store.Paths.TranslationPath(number));
+        _dirty = false;
+        _autoSave.Stop();
 
-        ScrollSentences.ScrollToTop();
-        TbxDoc.CaretIndex = 0;
+        TxtSourceInfo.Text = src.Exists
+            ? $"{TextStats.CountChars(src.Text)} 字 · {TextStats.CountParagraphs(src.Text)} 段 · 只读"
+            : "读不到这个文件";
 
-        _syncingList = true;
-        ListChapters.SelectedIndex = IndexOfChapter(number);
-        _syncingList = false;
-
-        _cfg.LastChapter = number;
-
-        UpdateStats();
-        ComputeCurrent();
+        TxtTrPath.Text = RelativeForDisplay(trPath);
+        UpdateStat();
+        Status(_doc.Exists ? "已载入" : "译文文件还不存在，一开写就会建");
     }
 
-    private int IndexOfChapter(int number)
-    {
-        for (int i = 0; i < _chapters.Count; i++)
-            if (_chapters[i].Number == number) return i;
-        return -1;
-    }
+    // ================================================================ 编辑 / 保存
 
-    private void OnChapterPick(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncingList) return;
-
-        int idx = ListChapters.SelectedIndex;
-        if (idx < 0 || idx >= _chapters.Count) return;
-        if (_chapters[idx].Number == _current) return;
-
-        LoadChapter(_chapters[idx].Number);
-    }
-
-    // ================================================================ 编辑
-
-    private void OnDocChanged(object sender, TextChangedEventArgs e)
+    private void OnTranslationChanged(object sender, TextChangedEventArgs e)
     {
         if (_loading) return;
 
         _dirty = true;
-        _auto.Stop();
-        _auto.Start();
+        UpdateStat();
 
-        TxtStateL.Text = "● 未保存（停手 1.2 秒自动存，或 Ctrl+S）";
-        UpdateStats();
-        ComputeCurrent();
+        int delay = Math.Max(0, _settings.AutoSaveDelayMs);
+        if (delay == 0) { TxtSaveState.Text = "未保存"; return; }
+
+        _autoSave.Stop();
+        _autoSave.Interval = TimeSpan.FromMilliseconds(delay);
+        _autoSave.Start();
+        TxtSaveState.Text = "未保存（停手后自动存）";
     }
 
-    private void OnDocSelectionChanged(object sender, RoutedEventArgs e)
-    {
-        if (_loading) return;
-        ComputeCurrent();
-    }
+    private void OnSave(object sender, RoutedEventArgs e) => SaveNow(quiet: false);
 
     /// <summary>
-    /// 右栏光标落在第几段 → 左栏高亮对应的句子。
-    /// 段落位置按比例映射（源文没有分段，只能估算）。
+    /// 真正落盘。quiet=true 时（自动保存）失败不弹窗，只把状态写进状态栏，
+    /// 免得每次重试都糊用户一脸。
     /// </summary>
-    private void ComputeCurrent()
+    private bool SaveNow(bool quiet)
     {
-        if (_sentenceView.Count == 0) return;
+        _autoSave.Stop();
 
-        string text = TbxDoc.Text ?? "";
-        int caret = Math.Min(TbxDoc.CaretIndex, text.Length);
-        string head = text.Substring(0, caret);
+        if (_store == null || _current == null) return true;
+        if (!_dirty) return true;
 
-        int paraAtCaret = CountParagraphs(head) - 1;          // 第一段是章名
-        int bodyParas = CountParagraphs(text) - 1;            // 正文段数
+        string path = _store.TranslationPath(_current);
 
-        int idx;
-        if (bodyParas <= 0)
-        {
-            // 正文还一个字都没有：就指着第一句
-            idx = 0;
-        }
-        else
-        {
-            if (paraAtCaret < 0) paraAtCaret = 0;
-            if (paraAtCaret >= bodyParas) paraAtCaret = bodyParas - 1;
-
-            // 第 k 段对应句区间的起点：写第一段时左边指第一句，
-            // 写最后一段时指最后一组句子。按段落位置线性映射（估算）。
-            idx = (int)Math.Floor((double)paraAtCaret * _sentenceView.Count / bodyParas);
-        }
-
-        if (idx < 0) idx = 0;
-        if (idx > _sentenceView.Count - 1) idx = _sentenceView.Count - 1;
-
-        if (idx == _currentSentence) return;
-        _currentSentence = idx;
-
-        foreach (var s in _sentenceView) s.IsCurrent = false;
-        var target = _sentenceView[idx];
-        target.IsCurrent = true;
-
-        ScrollSentenceIntoView(target);
-    }
-
-    private void ScrollSentenceIntoView(SentenceVm vm)
-    {
-        ListSentences.UpdateLayout();
-        if (ListSentences.ItemContainerGenerator.ContainerFromItem(vm) is FrameworkElement fe)
-            fe.BringIntoView();
-    }
-
-    /// <summary>数"空行分隔"的段落块数（块内可能还有单换行）。</summary>
-    private static int CountParagraphs(string text)
-    {
-        if (text.Length == 0) return 0;
-        int count = 0;
-        foreach (string block in Regex.Split(text, @"\r?\n[ \t]*\r?\n"))
-        {
-            if (block.Trim().Length > 0) count++;
-        }
-        return count;
-    }
-
-    // ================================================================ 保存
-
-    private void SaveQuietly(bool force = false)
-    {
-        if (_current <= 0) return;
-
-        SaveOutcome outcome;
         try
         {
-            outcome = _store.SaveRaw(_current, TbxDoc.Text, _mdSha, DateTime.Now, force);
+            _doc = TranslationStore.Save(
+                path, TbxTranslation.Text, _doc?.Sha,
+                ProjectLayout.Backups(_store.Root), DateTime.Now);
+
+            _dirty = false;
+            Status($"已保存 {DateTime.Now:HH:mm:ss}");
+            TxtSaveState.Text = "已保存";
+            return true;
+        }
+        catch (TranslationConflictException ex)
+        {
+            if (quiet) { TxtSaveState.Text = "磁盘上的文件被改过，等你决定"; return false; }
+            return ResolveConflict(path, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (!quiet) Warn("没保存", ex.Message);
+            else TxtSaveState.Text = "没保存：" + ex.Message;
+            return false;
         }
         catch (Exception ex)
         {
-            TxtStateL.Text = "⚠ 保存失败：" + ex.Message;
-            return;
+            if (!quiet) Warn("保存失败", ex.Message);
+            else TxtSaveState.Text = "保存失败";
+            return false;
         }
-
-        if (outcome.Conflict)
-        {
-            AskConflict();
-            return;
-        }
-
-        if (!outcome.Ok)
-        {
-            TxtStateL.Text = "⚠ " + outcome.Reason;
-            return;
-        }
-
-        _dirty = false;
-        _mdSha = outcome.NewSha;
-
-        TxtStateL.Text = "已保存 " + outcome.SavedAt.ToString("HH:mm:ss")
-                       + (outcome.BackupPath != null ? "（今日首存已备份）" : "");
-
-        RefreshChapterChars(_current);
-        UpdateStats();
     }
 
-    private void AskConflict()
+    /// <summary>磁盘被别的程序改过：让用户二选一，绝不替他决定。</summary>
+    private bool ResolveConflict(string path, TranslationConflictException ex)
     {
         var r = MessageBox.Show(this,
-            "这一章的译稿在磁盘上被改过了（可能是 MarkText、git 切分支或别的程序）。\n\n"
-            + "是 = 用我现在的覆盖磁盘\n"
-            + "否 = 丢掉我的改动，重新读磁盘那一版\n"
-            + "取消 = 先不存，我自己决定",
-            "磁盘版 vs 我的版",
-            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+            "磁盘上的这份译文被别的程序改过了。\n\n" +
+            "是：用我这边的内容覆盖磁盘\n" +
+            "否：放弃我这边，改成读磁盘上的版本\n" +
+            "取消：先什么都不做\n\n" + path,
+            "文件冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+
+        if (r == MessageBoxResult.Cancel) return false;
 
         if (r == MessageBoxResult.Yes)
         {
-            SaveQuietly(force: true);
-            TxtStateL.Text = "已用我的版本覆盖磁盘";
+            try
+            {
+                _doc = TranslationStore.Save(path, TbxTranslation.Text, null,
+                                             ProjectLayout.Backups(_store!.Root), DateTime.Now);
+                _dirty = false;
+                Status("已覆盖保存 " + DateTime.Now.ToString("HH:mm:ss"));
+                TxtSaveState.Text = "已保存（覆盖了磁盘版本）";
+                return true;
+            }
+            catch (Exception e2) { Warn("保存失败", e2.Message); return false; }
         }
-        else if (r == MessageBoxResult.No)
+
+        // 否：读回磁盘版本。用户的编辑是有意放弃的，别再问一次。
+        _doc = TranslationStore.Load(path);
+        _loading = true;
+        TbxTranslation.Text = _doc.TextLf;
+        _loading = false;
+        _dirty = false;
+        UpdateStat();
+        Status("已载入磁盘上的版本");
+        TxtSaveState.Text = "已载入磁盘版本";
+        return true;
+    }
+
+    private void OnSaveAs(object sender, RoutedEventArgs e)
+    {
+        if (_store == null || _current == null) return;
+
+        string suggest = _store.TranslationPath(_current);
+        var dlg = new Microsoft.Win32.SaveFileDialog
         {
+            Title = "另存译文",
+            Filter = "Markdown (*.md)|*.md|所有文件 (*.*)|*.*",
+            FileName = Path.GetFileName(suggest),
+            InitialDirectory = Path.GetDirectoryName(suggest),
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        try
+        {
+            // 先当作"新文件"写出去，再把项目里的这条记录指过去
+            _doc = TranslationStore.Save(dlg.FileName, TbxTranslation.Text, null,
+                                         ProjectLayout.Backups(_store.Root), DateTime.Now);
+            _store.SetTranslationPath(_current, dlg.FileName);
             _dirty = false;
-            LoadChapter(_current);
-            TxtStateL.Text = "已重载磁盘版本";
-        }
-    }
 
-    // ================================================================ 按钮与快捷键
-
-    private void OnSaveClick(object sender, RoutedEventArgs e)
-    {
-        _auto.Stop();
-        SaveQuietly();
-    }
-
-    private void OnCopyEn(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not SentenceVm vm) return;
-
-        try
-        {
-            Clipboard.SetText(vm.En);
-            TxtStateL.Text = $"已复制第 {vm.NumText} 句（纯英文，不含译注）";
+            TxtTrPath.Text = RelativeForDisplay(dlg.FileName);
+            Status("已另存为 " + dlg.FileName);
+            TxtSaveState.Text = "已保存（另存）";
         }
         catch (Exception ex)
         {
-            TxtStateL.Text = "复制失败：" + ex.Message;
+            Warn("另存失败", ex.Message);
         }
     }
 
-    private void OnToggleNote(object sender, RoutedEventArgs e)
+    // ================================================================ 状态显示
+
+    private void UpdateStat()
     {
-        if (sender is not Button btn || btn.Tag is not SentenceVm vm) return;
-        vm.ToggleNote();
+        string t = TbxTranslation.Text;
+        TxtStat.Text = $"{TextStats.CountChars(t)} 字 · {TextStats.CountParagraphs(t)} 段";
     }
 
-    private void OnOpenTranslation(object sender, RoutedEventArgs e)
+    private void Status(string msg) => TxtSaveState.Text = msg;
+
+    private string RelativeForDisplay(string absolute)
     {
-        string path = _store.Paths.TranslationPath(_current);
-        if (!File.Exists(path))
+        if (_store == null) return absolute;
+        string rel = Path.GetRelativePath(_store.Root, absolute);
+        return rel.StartsWith("..") ? absolute : rel;
+    }
+
+    private void Warn(string title, string body) =>
+        MessageBox.Show(this, body, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+
+    // ================================================================ 快捷键
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers == ModifierKeys.Control)
         {
-            MessageBox.Show(this, "这一章还没有译稿文件 —— 写一句它就会自动生成。",
-                            "打开译稿", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            switch (e.Key)
+            {
+                case Key.S: _autoSave.Stop(); SaveNow(quiet: false); e.Handled = true; return;
+                case Key.N: NewProject(); e.Handled = true; return;
+                case Key.O: OpenProjectDialog(); e.Handled = true; return;
+            }
         }
-
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
-            { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, "打不开这个文件：" + ex.Message, "打开译稿",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
-
-    private void OnSwitchProject(object sender, RoutedEventArgs e)
-    {
-        if (_dirty) SaveQuietly();
-
-        // 换项目也走导入窗口：先看清格式，再决定怎么读（不再"盲选文件"）
-        var dlg = new ImportWindow();
-        if (dlg.ShowDialog() != true || dlg.Result == null) return;
-
-        App.ApplyImport(_cfg, dlg.Result);
-
-        try { _cfg.Save(DeskConfig.DefaultPath); } catch { /* 存不下也能继续用 */ }
-
-        _store = new ChapterStore(_cfg.ToPaths(), _cfg.ToProfile());
-        BuildChapterList();
-        LoadChapter(_chapters.Count > 0 ? _chapters[0].Number : 1);
-    }
-
-    private void OnKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control)
-        {
-            _auto.Stop();
-            SaveQuietly();
-            e.Handled = true;
-        }
-    }
-
-    // ================================================================ 统计
-
-    private void UpdateStats()
-    {
-        string text = TbxDoc.Text ?? "";
-        int chars = ChapterStore.CountChars(text.Replace("\r\n", "\n"));
-        int paras = Math.Max(0, CountParagraphs(text) - 1);
-
-        TxtStat.Text = $"{chars:N0} 字　·　{paras} 段　·　原文 {_sentenceView.Count} 句";
-    }
-
-    private void RefreshChapterChars(int number)
-    {
-        var row = _chapters.FirstOrDefault(c => c.Number == number);
-        if (row == null) return;
-        row.Chars = ChapterStore.CountChars(TbxDoc.Text.Replace("\r\n", "\n"));
+        base.OnKeyDown(e);
     }
 
     // ================================================================ 关闭
 
-    protected override void OnClosing(CancelEventArgs e)
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        _auto.Stop();
-
-        if (_dirty)
+        if (!ConfirmLeaveCurrent())
         {
-            var r = MessageBox.Show(this,
-                "这一章还有没保存的改动。\n\n"
-                + "是 = 保存后关闭\n"
-                + "否 = 丢掉改动关闭\n"
-                + "取消 = 继续编辑",
-                "未保存的改动",
-                MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-
-            if (r == MessageBoxResult.Cancel) { e.Cancel = true; return; }
-            if (r == MessageBoxResult.Yes)
-            {
-                SaveQuietly();
-                if (_dirty) { e.Cancel = true; return; }
-            }
+            e.Cancel = true;
+            return;
         }
 
-        SaveConfig();
+        _settings.WindowWidth = ActualWidth;
+        _settings.WindowHeight = ActualHeight;
+        _settings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (_store != null) _settings.LastProjectRoot = _store.Root;
+        _settings.Save();
+
         base.OnClosing(e);
     }
 
-    private void SaveConfig()
+    /// <summary>
+    /// 离开当前稿子（切文件 / 关窗 / 换项目）前的统一关口：
+    /// 有改动就先存；存不下（冲突被取消）就返回 false，别让操作继续。
+    /// </summary>
+    private bool ConfirmLeaveCurrent()
     {
-        _cfg.LastChapter = _current;
-        if (WindowState == WindowState.Normal)
-        {
-            _cfg.WindowWidth = ActualWidth;
-            _cfg.WindowHeight = ActualHeight;
-        }
+        if (!_dirty) return true;
+        return SaveNow(quiet: false);
+    }
 
-        try { _cfg.Save(DeskConfig.DefaultPath); }
-        catch { /* 配置存不下不影响退出 */ }
+    // ================================================================ 空状态 / 说明
+
+    private void SetEmptyState()
+    {
+        Title = "译台";
+        TxtProject.Text = "还没有打开项目";
+        TxtProjectPath.Text = "文件 → 新建项目 / 打开项目";
+        CmbSources.IsEnabled = false;
+        TbxTranslation.IsEnabled = false;
+        MiSave.IsEnabled = false;
+        MiSaveAs.IsEnabled = false;
+        SetPanesEmpty("先从“文件 → 新建项目”开始：\n\n" +
+                      "选一个文件夹当项目根，软件会在里面建 sources（原文）、translations（译文）、backups（备份）。\n" +
+                      "然后“导入源文件”把要翻的文件复制进去，左侧就显示原文，右侧写译文。");
+    }
+
+    private void SetPanesEmpty(string hint)
+    {
+        _loading = true;
+        TbxSource.Text = hint;
+        TbxTranslation.Text = "";
+        _loading = false;
+        TxtSourceInfo.Text = "";
+        TxtTrPath.Text = "";
+        TxtStat.Text = "";
+    }
+
+    private void OnExit(object sender, RoutedEventArgs e) => Close();
+
+    private void OnExplainLayout(object sender, RoutedEventArgs e)
+    {
+        string root = _store?.Root ?? "（还没打开项目）";
+        MessageBox.Show(this,
+            "项目就是一个普通文件夹，双击里面的 project.json 就能打开。\n\n" +
+            root + "\n" +
+            "  project.json    项目清单：有哪些源文件、译文在哪、上次打开的是哪一份\n" +
+            "  sources\\        导入时复制进来的原文（项目自足，整包可以搬走）\n" +
+            "  translations\\   译文，默认与原文同名；另存为改的是项目清单里的指向\n" +
+            "  backups\\        每天第一次保存前的上一版\n" +
+            "  .yitai\\         程序自己用，别管它\n\n" +
+            "为什么用文件夹而不是一个文件：译文得是能单独打开的 md，\n" +
+            "能被别的编辑器、git、排版流程直接用；塞进一个二进制里就谁也读不了。",
+            "项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void OnAbout(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show(this,
+            "译台 / YiTai\n\n左原文、右译文的最小翻译工作台。\n" +
+            "MIT 许可，源码可读可改。\n\n" +
+            "快捷键：Ctrl+S 保存 · Ctrl+N 新建项目 · Ctrl+O 打开项目",
+            "关于译台", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 }

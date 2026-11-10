@@ -1,234 +1,155 @@
 <!-- ============================================================
-     MainWindow.xaml = 译台主窗口（左右分栏）
+     MainWindow.xaml —— 译台主窗口
      ============================================================
-     左栏：英文原文，逐句排列（可复制、可展开译注、当前句高亮）
-     右栏：一整篇译稿 Markdown 编辑区（所见即所存）
+     结构（按软件的标准来，不做"向导式"的怪东西）：
+       菜单栏：文件（新建/打开/保存/另存为/导入源文件/退出）、帮助
+       左栏：源文件选择 + 整篇原文（只读、可选中复制）
+       右栏：整篇译文编辑区（所见即所存）
 
-     ★ 这一版的取舍（第一版做错了，记下来）：
-       第一版把译文拆成"一句一个框"的卡片，读起来不像文章，
-       而且中文一段跨好几句时，行与行的对应关系就撑不住。
-       现在改成右边整篇编辑，段落怎么分完全由写字的人决定。
+     ★ 界面不认识"注解""切句""章节"这些概念。它只拿两样东西：
+       一份源文件全文、一份译文全文。以后要加章节树、双语对照、
+       术语提示，都挂到侧边或新的面板上，不动这两块。
 
-     ★ "译到哪了"怎么表达：
-       右栏光标落在第几段，就按段落位置估算左栏对应的句子并高亮。
-       源文本身没有分段信息，所以这是**估算**，界面上也明说了。
-       （真正精确的逐句勾选，等你要的时候再加，不默认强加流程。）
-
-     ★ 三行外壳（标题栏 / 主体 / 状态栏）沿用"工作台"的习惯。
+     ★ 左侧刻意用等宽字、不做句级高亮：原文是给你读和复制用的，
+       不是待办清单。逐句高亮属于"阅读器"，等真需要时再加一层。
      ============================================================ -->
 <Window x:Class="YiTai.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="译台"
+        Width="1280" Height="860"
+        MinWidth="900" MinHeight="560"
         Background="{DynamicResource BgDeep}"
         Foreground="{DynamicResource TextMain}"
         FontFamily="Microsoft YaHei"
         WindowStartupLocation="CenterScreen"
-        UseLayoutRounding="True"
-        TextOptions.TextFormattingMode="Ideal">
-
-    <Window.Resources>
-
-        <!-- ============== 左栏：一句英文 ============== -->
-        <DataTemplate x:Key="SentenceTmpl">
-            <Border Background="{Binding RowBg}" BorderBrush="{Binding BarBrush}"
-                    BorderThickness="3,0,0,0" CornerRadius="4"
-                    Padding="10,5,6,5" Margin="0,0,0,1">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="{Binding En}" TextWrapping="Wrap"
-                                   FontFamily="Georgia, Cambria, Times New Roman"
-                                   FontSize="13.5" LineHeight="21"
-                                   Foreground="{Binding FgBrush}"/>
-
-                        <Border Visibility="{Binding NoteVisibility}"
-                                Background="{DynamicResource BgCardAlt}"
-                                BorderBrush="{DynamicResource Line}" BorderThickness="1"
-                                CornerRadius="6" Padding="9,7" Margin="0,6,0,0">
-                            <TextBlock Text="{Binding Note}" TextWrapping="Wrap"
-                                       FontSize="11.5" LineHeight="19"
-                                       Foreground="{DynamicResource TextDim}"/>
-                        </Border>
-                    </StackPanel>
-
-                    <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                VerticalAlignment="Top" Margin="6,0,0,0">
-                        <Button Content="{Binding NoteButtonText}"
-                                Visibility="{Binding NoteButtonVisibility}"
-                                Style="{StaticResource BtnMini}"
-                                Tag="{Binding}" Click="OnToggleNote"
-                                ToolTip="展开这句的译注"/>
-                        <Button Content="复" Style="{StaticResource BtnMini}"
-                                Tag="{Binding}" Click="OnCopyEn"
-                                ToolTip="复制这句英文（已去掉译注，可直接粘去问 AI）"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-        </DataTemplate>
-
-        <!-- ============== 左栏：一章 ============== -->
-        <DataTemplate x:Key="ChapterTmpl">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding Title}" FontSize="12.5"
-                           Foreground="{DynamicResource TextMain}"
-                           TextTrimming="CharacterEllipsis"/>
-                <TextBlock Grid.Column="1" Text="{Binding Display}"
-                           FontFamily="Consolas" FontSize="10.5"
-                           Foreground="{DynamicResource TextFaint}"
-                           Margin="6,1,0,0"/>
-            </Grid>
-        </DataTemplate>
-
-    </Window.Resources>
+        UseLayoutRounding="True">
 
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ============== 顶部标题栏 ============== -->
-        <Border Grid.Row="0" Background="{DynamicResource BgShell}"
+        <!-- ======================================================== 菜单 -->
+        <Menu Grid.Row="0" Background="{DynamicResource BgCard}" Padding="4,2"
+              BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+            <MenuItem Header="文件(_F)">
+                <MenuItem Header="新建项目…" InputGestureText="Ctrl+N" Click="OnNewProject"/>
+                <MenuItem Header="打开项目…" InputGestureText="Ctrl+O" Click="OnOpenProject"/>
+                <Separator/>
+                <MenuItem x:Name="MiSave" Header="保存" InputGestureText="Ctrl+S" Click="OnSave"/>
+                <MenuItem x:Name="MiSaveAs" Header="另存为…" Click="OnSaveAs"/>
+                <Separator/>
+                <MenuItem x:Name="MiImport" Header="导入源文件…" Click="OnImport"/>
+                <MenuItem x:Name="MiLink" Header="关联已有译文…" Click="OnLinkTranslations"/>
+                <Separator/>
+                <MenuItem Header="退出" Click="OnExit"/>
+            </MenuItem>
+            <MenuItem Header="帮助(_H)">
+                <MenuItem Header="项目文件夹里有什么？" Click="OnExplainLayout"/>
+                <MenuItem Header="关于译台" Click="OnAbout"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- ======================================================== 项目条 -->
+        <Border Grid.Row="1" Background="{DynamicResource BgCard}"
                 BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1"
-                Padding="20,11,20,11">
+                Padding="14,9">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="保存" Style="{StaticResource BtnAccent}"
-                            Click="OnSaveClick" Margin="0,0,6,0"
-                            ToolTip="Ctrl+S 立即落盘；平时停手 1.2 秒也会自动存"/>
-                    <Button Content="打开译稿" Style="{StaticResource Btn}"
-                            Click="OnOpenTranslation" Margin="0,0,6,0"
-                            ToolTip="用系统默认程序打开这一章的 md"/>
-                    <Button Content="换文件" Style="{StaticResource Btn}"
-                            Click="OnSwitchProject"
-                            ToolTip="选另一份原文，程序自己识别目录结构"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BtnSave" Content="保存" Style="{StaticResource BtnAccent}"
+                            Click="OnSave" Margin="0,0,8,0"/>
+                    <Button x:Name="BtnImport" Content="导入源文件" Style="{StaticResource Btn}"
+                            Click="OnImport" Margin="0,0,8,0"/>
+                    <Button x:Name="BtnOpen" Content="打开项目" Style="{StaticResource Btn}"
+                            Click="OnOpenProject"/>
                 </StackPanel>
 
-                <StackPanel>
-                    <TextBlock x:Name="TxtChapter" Text="第三章"
-                               FontSize="16.5" FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextMain}"/>
-                    <TextBlock x:Name="TxtSub" Text=""
-                               FontSize="11" Margin="0,3,0,0"
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="TxtProject" Text="还没有打开项目" FontSize="14.5" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="TxtProjectPath" Text="文件 → 新建项目 / 打开项目"
+                               FontSize="11" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"
                                Foreground="{DynamicResource TextFaint}"/>
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <!-- ============== 主体：左原文 / 右译稿 ============== -->
-        <Grid Grid.Row="1">
+        <!-- ======================================================== 双栏 -->
+        <Grid Grid.Row="2" Margin="12,12,12,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="0.85*"/>
+                <ColumnDefinition Width="46*" MinWidth="260"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="1.15*"/>
+                <ColumnDefinition Width="54*" MinWidth="320"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 左：章节目录 + 英文原文 -->
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
-
-                <!-- 章节目录（横向一排，省高度） -->
-                <Border Grid.Row="0" Background="{DynamicResource BgNav}"
-                        BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1"
-                        Padding="12,8,12,6">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Left" Text="章" FontSize="11"
-                                   Foreground="{DynamicResource TextDim}"
-                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <ListBox x:Name="ListChapters" Background="Transparent"
-                                 BorderThickness="0" Padding="0"
-                                 ItemContainerStyle="{StaticResource ChapterItem}"
-                                 ItemTemplate="{StaticResource ChapterTmpl}"
-                                 HorizontalContentAlignment="Stretch"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 SelectionChanged="OnChapterPick"
-                                 MaxHeight="132"/>
-                    </DockPanel>
-                </Border>
-
-                <!-- 英文原文 -->
-                <Border Grid.Row="1" Background="{DynamicResource BgCard}"
-                        BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,0">
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Top" Margin="14,10,14,4">
-                            <TextBlock x:Name="TxtSrcHead" Text="英文原文"
-                                       FontSize="11.5"
-                                       Foreground="{DynamicResource TextDim}"/>
-                            <TextBlock Text="「复」复制纯英文 · 光标在右栏第几段，左边就高亮到哪（估算）"
-                                       FontSize="10.5" Margin="0,3,0,0" TextWrapping="Wrap"
-                                       Foreground="{DynamicResource TextFaint}"/>
-                        </StackPanel>
-
-                        <ScrollViewer x:Name="ScrollSentences"
-                                      VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      Padding="10,4,10,16">
-                            <ItemsControl x:Name="ListSentences"
-                                          ItemTemplate="{StaticResource SentenceTmpl}"/>
-                        </ScrollViewer>
-                    </DockPanel>
-                </Border>
-            </Grid>
-
-            <!-- 分栏拖手 -->
-            <GridSplitter Grid.Column="1" Style="{StaticResource SplitterThin}"
-                          ResizeBehavior="PreviousAndNext"/>
-
-            <!-- 右：整篇译稿编辑区 -->
-            <Border Grid.Column="2" Background="{DynamicResource BgCard}"
-                    BorderBrush="{DynamicResource Line}" BorderThickness="1"
-                    CornerRadius="10" Margin="2,12,14,14">
+            <!-- 左：原文 -->
+            <Border Grid.Column="0" Background="{DynamicResource BgCard}"
+                    BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8">
                 <DockPanel>
-                    <DockPanel DockPanel.Dock="Top" Margin="18,11,14,4">
-                        <TextBlock x:Name="TxtMdName" DockPanel.Dock="Right"
-                                   FontSize="10.5" VerticalAlignment="Center"
-                                   Foreground="{DynamicResource TextFaint}"/>
-                        <TextBlock Text="译稿（一整篇 Markdown，所见即所存）"
-                                   FontSize="11.5"
-                                   Foreground="{DynamicResource TextDim}"/>
-                    </DockPanel>
+                    <Border DockPanel.Dock="Top" Padding="14,10,10,8"
+                            BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="原文" FontSize="12.5"
+                                       VerticalAlignment="Center" Margin="0,0,10,0"
+                                       Foreground="{DynamicResource TextDim}"/>
+                            <TextBlock x:Name="TxtSourceInfo" DockPanel.Dock="Right" FontSize="11"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFaint}"/>
+                            <ComboBox x:Name="CmbSources" FontSize="12.5" IsEnabled="False"
+                                      SelectionChanged="OnSourceChanged"
+                                      ToolTip="项目里导入的源文件"/>
+                        </DockPanel>
+                    </Border>
 
-                    <TextBox x:Name="TbxDoc" Style="{StaticResource DocBox}"
-                             TextChanged="OnDocChanged"
-                             SelectionChanged="OnDocSelectionChanged"/>
+                    <!-- 整篇原文：只读、可选中、Ctrl+C 复制 -->
+                    <TextBox x:Name="TbxSource" IsReadOnly="True" BorderThickness="0"
+                             Background="Transparent" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                             FontFamily="Consolas" FontSize="13.5" Padding="14,10,12,16"
+                             Foreground="{DynamicResource TextMain}"
+                             TextBlock.LineHeight="24"/>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Style="{StaticResource SplitterThin}" ResizeBehavior="PreviousAndNext"/>
+
+            <!-- 右：译文 -->
+            <Border Grid.Column="2" Background="{DynamicResource BgCard}"
+                    BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Padding="14,10,10,8"
+                            BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="译文" FontSize="12.5"
+                                       VerticalAlignment="Center" Margin="0,0,10,0"
+                                       Foreground="{DynamicResource TextDim}"/>
+                            <TextBlock x:Name="TxtTrPath" DockPanel.Dock="Right" FontSize="11"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFaint}" HorizontalAlignment="Right"/>
+                            <TextBlock Text="所见即所存" FontSize="11"
+                                       Foreground="{DynamicResource TextFaint}" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <TextBox x:Name="TbxTranslation" Style="{StaticResource DocBox}"
+                             IsEnabled="False" TextChanged="OnTranslationChanged"/>
                 </DockPanel>
             </Border>
         </Grid>
 
-        <!-- ============== 状态栏 ============== -->
-        <Border Grid.Row="2" Background="{DynamicResource BgShell}"
+        <!-- ======================================================== 状态栏 -->
+        <Border Grid.Row="3" Background="{DynamicResource BgCard}"
                 BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0"
-                Padding="20,7,20,7">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock x:Name="TxtStateL" FontSize="11"
-                           Foreground="{DynamicResource TextFaint}"
-                           TextTrimming="CharacterEllipsis"/>
-                <TextBlock x:Name="TxtStat" Grid.Column="1" FontSize="11"
-                           Margin="16,0,16,0" Foreground="{DynamicResource TextDim}"/>
-                <TextBlock x:Name="TxtStateR" Grid.Column="2" FontSize="11"
-                           HorizontalAlignment="Right"
-                           Foreground="{DynamicResource TextFaint}"
-                           TextTrimming="CharacterEllipsis"/>
-            </Grid>
+                Padding="14,6">
+            <DockPanel>
+                <TextBlock x:Name="TxtSaveState" DockPanel.Dock="Right" FontSize="11.5"
+                           Foreground="{DynamicResource TextFaint}"/>
+                <TextBlock x:Name="TxtStat" FontSize="11.5" Foreground="{DynamicResource TextDim}"/>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>
