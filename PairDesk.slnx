@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PairDesk.App/PairDesk.App.csproj" />
+    <Project Path="src/PairDesk.Core/PairDesk.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PairDesk.Tests/PairDesk.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,24 @@
+# 构建产物
+bin/
+obj/
+dist/
+*.dll
+*.pdb
+*.exe
+*.zip
+
+# 本地个人配置（含路径，不该进仓库）
+config.json
+*.real.bak
+
+# 工作台自己的状态与备份（可能是你自己的译稿）
+03-工作文件/
+04-译稿/
+!samples/04-译稿/
+
+# 编辑器 / 系统
+.vs/
+.idea/
+*.user
+Thumbs.db
+desktop.ini

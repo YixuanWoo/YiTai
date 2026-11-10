@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ============================================================
+       PairDesk.Core —— 纯逻辑层（切句 / 读写 / 备份 / 冲突检测）
+       ============================================================
+       刻意不带任何 UI 依赖（TargetFramework 是 net10.0，不是
+       net10.0-windows），原因有三：
+         1. 这一层能被单元测试直接跑，不用起窗口；
+         2. 将来如果要换壳（WinForms / Avalonia / 命令行），只换 UI；
+         3. 开源协作者改逻辑时，不会碰到界面代码。
+
+       本文件平时不用改；只有加第三方库时才需要动。
+       ============================================================ -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PairDesk.Core</RootNamespace>
+    <AssemblyName>PairDesk.Core</AssemblyName>
+    <Nullable>enable</Nullable>
+    <!-- 每个文件手写 using，方便别人（和自己）看清依赖了什么 -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

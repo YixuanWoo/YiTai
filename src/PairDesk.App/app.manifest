@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- ============================================================
+     app.manifest —— 只为一件事：声明 DPI 感知
+     ============================================================
+     不声明的话，在 125% / 150% 缩放的笔记本上，整个窗口会被
+     Windows 拉伸成模糊的一团（WPF 也会被当成老程序处理）。
+
+     PerMonitorV2：拖动到另一块不同缩放的显示器上，字重新变清晰。
+     ============================================================ -->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="PairDesk.app" />
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

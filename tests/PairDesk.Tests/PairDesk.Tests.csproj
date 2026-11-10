@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ============================================================
+       PairDesk.Tests —— 不依赖任何测试框架的冒烟测试
+       ============================================================
+       故意不用 xUnit / NUnit：这个项目要"下载下来就能验"，
+       少一个第三方包，就少一层 restore 失败的可能。
+
+       跑法：dotnet run 指定项目路径（见 README 的"验证"一节）
+       全通过 → 退出码 0；任意失败 → 退出码 1。
+       ============================================================ -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>PairDesk.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PairDesk.Core\PairDesk.Core.csproj" />
+  </ItemGroup>
+
+</Project>

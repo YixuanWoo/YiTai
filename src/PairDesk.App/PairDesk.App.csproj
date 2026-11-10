@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ============================================================
+       PairDesk.App —— 界面层（WPF，Windows only）
+       ============================================================
+       为什么是 WPF 而不是 WinForms：
+         · 用户自己工程里的「写作台」模块就是 WPF，骨架能直接搬
+           （三行外壳 + 目录/编辑/可拖分栏 的布局习惯）；
+         · 原生支持 HiDPI 与 ClearType，中文长文本读起来比
+           手写设备的 WinForms 舒服；
+         · ItemsControl + DataTemplate 天然适合"一句一行"这种重复结构。
+
+       还可以考虑 Windows 上的 .NET 桌面框架没有第三个选项值得换。
+       ============================================================ -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>PairDesk.App</RootNamespace>
+    <AssemblyName>PairDesk</AssemblyName>
+    <Version>0.1.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 单文件自包含发布时用不到，但本地 F5 调试时能少一堆告警 -->
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PairDesk.Core\PairDesk.Core.csproj" />
+  </ItemGroup>
+
+</Project>
