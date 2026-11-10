@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/YiTai.App/YiTai.App.csproj" />
+    <Project Path="src/YiTai.Core/YiTai.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/YiTai.Tests/YiTai.Tests.csproj" />
+  </Folder>
+</Solution>

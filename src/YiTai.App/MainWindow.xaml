@@ -1,5 +1,5 @@
 <!-- ============================================================
-     MainWindow.xaml = 对照台主窗口（左右分栏）
+     MainWindow.xaml = 译台主窗口（左右分栏）
      ============================================================
      左栏：英文原文，逐句排列（可复制、可展开译注、当前句高亮）
      右栏：一整篇译稿 Markdown 编辑区（所见即所存）
@@ -16,10 +16,10 @@
 
      ★ 三行外壳（标题栏 / 主体 / 状态栏）沿用"工作台"的习惯。
      ============================================================ -->
-<Window x:Class="PairDesk.App.MainWindow"
+<Window x:Class="YiTai.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="对照台"
+        Title="译台"
         Background="{DynamicResource BgDeep}"
         Foreground="{DynamicResource TextMain}"
         FontFamily="Microsoft YaHei"

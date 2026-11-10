@@ -1,4 +1,4 @@
-# PairDesk · 对照台
+# YiTai · 译台
 
 一个给"逐句啃原文 + 写一整篇译文"的人用的 Windows 小工具。
 
@@ -57,13 +57,13 @@
 要求：Windows 10/11，装了 .NET 10 桌面运行时（或者直接用自包含发布的 exe，连运行时都不用装）。
 
 ```
-git clone https://github.com/<you>/PairDesk.git
-cd PairDesk
-.\build.ps1            # 调试版，产物在 src\PairDesk.App\bin\Debug\net10.0-windows\PairDesk.exe
-.\build.ps1 -Release   # 单文件免安装 exe，产物在 dist\PairDesk.exe（约 60–90MB）
+git clone https://github.com/<you>/YiTai.git
+cd YiTai
+.\build.ps1            # 调试版，产物在 src\YiTai.App\bin\Debug\net10.0-windows\YiTai.exe
+.\build.ps1 -Release   # 单文件免安装 exe，产物在 dist\YiTai.exe（约 60–90MB）
 ```
 
-第一次运行会开**导入窗口**：选一份原文（或直接把文件拖到 exe 上：`PairDesk.exe ch01.md`），
+第一次运行会开**导入窗口**：选一份原文（或直接把文件拖到 exe 上：`YiTai.exe ch01.md`），
 看清预览再点头。程序据此推断目录结构，默认认这套约定，也支持在配置里改。
 
 ```
@@ -73,7 +73,7 @@ cd PairDesk
   03-工作文件\备份\                     ← 每日首存备份落这里
 ```
 
-配置在 `%APPDATA%\PairDesk\config.json`，路径模板 + 章数 + 解析档案都在里面，改完重启即生效。
+配置在 `%APPDATA%\YiTai\config.json`，路径模板 + 章数 + 解析档案都在里面，改完重启即生效。
 
 ## 想换成自己的目录约定 / 自己的注格式
 
@@ -97,7 +97,7 @@ cd PairDesk
 
 ## 已知的边界
 
-- 只做了 Windows（WPF）。逻辑全在 `PairDesk.Core`（`net10.0`，不 import 任何 UI 类型），要换 Avalonia/macOS 壳只需换壳。
+- 只做了 Windows（WPF）。逻辑全在 `YiTai.Core`（`net10.0`，不 import 任何 UI 类型），要换 Avalonia/macOS 壳只需换壳。
 - 左栏高亮是**按段落位置估算**，不是精确的句对句对齐。要精确，就得回到"一句一个框"，而那正是被否掉的方案。
   （如果你真需要逐句勾选"这句译完了"，可以加一个手动勾选框，不默认强加流程。）
 - 原文切句靠标点（`. !?` 后接空格/引号收尾）。遇到缩写、省略号、破折号插话会切碎，需要人工容忍。
@@ -111,10 +111,10 @@ cd PairDesk
 ## 目录
 
 ```
-PairDesk.slnx
-src\PairDesk.Core\        切句 / 剥注 / 读写回写 / 备份 / 冲突检测 / 配置（纯逻辑，无 UI）
-src\PairDesk.App\         WPF 壳：MainWindow + Theme + ViewModels
-tests\PairDesk.Tests\     无框架冒烟测试（dotnet run --project tests\PairDesk.Tests，退出码 0/1）
+YiTai.slnx
+src\YiTai.Core\        切句 / 剥注 / 读写回写 / 备份 / 冲突检测 / 配置（纯逻辑，无 UI）
+src\YiTai.App\         WPF 壳：MainWindow + Theme + ViewModels
+tests\YiTai.Tests\     无框架冒烟测试（dotnet run --project tests\YiTai.Tests，退出码 0/1）
 samples\                  自造样例文本，仅用于演示与测试
 docs\                     截图
 ```

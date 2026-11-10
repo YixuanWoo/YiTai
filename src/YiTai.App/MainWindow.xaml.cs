@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // MainWindow.xaml.cs —— 主窗口行为（左原文 / 右整篇译稿）
 // ============================================================
 //
@@ -28,9 +28,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
-using PairDesk.Core;
+using YiTai.Core;
 
-namespace PairDesk.App;
+namespace YiTai.App;
 
 public partial class MainWindow : Window
 {

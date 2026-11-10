@@ -11,7 +11,7 @@
 
 using System.Collections.Generic;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 /// <summary>一行：一句原文 + 该句的注 + 对应的译文。</summary>
 public sealed class Segment

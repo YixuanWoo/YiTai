@@ -13,9 +13,9 @@
 using System;
 using System.IO;
 using System.Windows;
-using PairDesk.Core;
+using YiTai.Core;
 
-namespace PairDesk.App;
+namespace YiTai.App;
 
 public partial class App : Application
 {
@@ -31,7 +31,7 @@ public partial class App : Application
         string cfgPath = DeskConfig.DefaultPath;
 
         // 便利项：自用时可以用环境变量指一个项目根，免去第一次要点选
-        string? seed = Environment.GetEnvironmentVariable("PAIRDESK_PROJECT");
+        string? seed = Environment.GetEnvironmentVariable("YITAI_PROJECT");
         var cfg = DeskConfig.LoadOrCreate(cfgPath, seed);
 
         // 把原文文件拖到 exe 上（或命令行带一个路径）：直接进导入预览

@@ -14,15 +14,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using PairDesk.Core;
+using YiTai.Core;
 
 internal static class Program
 {
     private static int _fail;
 
-    /// <summary>真实项目根（只读用）。可用环境变量 PAIRDESK_FIXTURE 覆盖。</summary>
+    /// <summary>真实项目根（只读用）。可用环境变量 YITAI_FIXTURE 覆盖。</summary>
     private static readonly string Fixture =
-        Environment.GetEnvironmentVariable("PAIRDESK_FIXTURE")
+        Environment.GetEnvironmentVariable("YITAI_FIXTURE")
         ?? @"D:\Benny\20_项目\小王子翻译";
 
     private static int Main()
@@ -226,7 +226,7 @@ internal static class Program
 
     private static void TestChapterLifecycle()
     {
-        string sandbox = Path.Combine(Path.GetTempPath(), "pairdesk-tests-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        string sandbox = Path.Combine(Path.GetTempPath(), "yitai-tests-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         string srcDir = Path.Combine(sandbox, "01-原文", "按章", "英文-带标注");
         string zhDir = Path.Combine(sandbox, "04-译稿");
         Directory.CreateDirectory(srcDir);
@@ -306,7 +306,7 @@ internal static class Program
     /// </summary>
     private static void TestRawSave()
     {
-        string sandbox = Path.Combine(Path.GetTempPath(), "pairdesk-raw-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        string sandbox = Path.Combine(Path.GetTempPath(), "yitai-raw-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         string srcDir = Path.Combine(sandbox, "01-原文", "按章", "英文-带标注");
         string zhDir = Path.Combine(sandbox, "04-译稿");
         Directory.CreateDirectory(srcDir);

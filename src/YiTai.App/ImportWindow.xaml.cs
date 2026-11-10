@@ -20,9 +20,9 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using PairDesk.Core;
+using YiTai.Core;
 
-namespace PairDesk.App;
+namespace YiTai.App;
 
 public partial class ImportWindow : Window
 {

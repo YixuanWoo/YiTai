@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- ============================================================
-       PairDesk.Core —— 纯逻辑层（切句 / 读写 / 备份 / 冲突检测）
+       YiTai.Core —— 纯逻辑层（切句 / 读写 / 备份 / 冲突检测）
        ============================================================
        刻意不带任何 UI 依赖（TargetFramework 是 net10.0，不是
        net10.0-windows），原因有三：
@@ -14,8 +14,8 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <RootNamespace>PairDesk.Core</RootNamespace>
-    <AssemblyName>PairDesk.Core</AssemblyName>
+    <RootNamespace>YiTai.Core</RootNamespace>
+    <AssemblyName>YiTai.Core</AssemblyName>
     <Nullable>enable</Nullable>
     <!-- 每个文件手写 using，方便别人（和自己）看清依赖了什么 -->
     <ImplicitUsings>disable</ImplicitUsings>

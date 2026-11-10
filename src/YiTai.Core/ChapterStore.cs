@@ -24,7 +24,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 /// <summary>目录与命名约定。开源版改这里就能适配别的书/别的项目结构。</summary>
 public sealed class DeskPaths

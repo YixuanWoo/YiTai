@@ -15,7 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 /// <summary>探测结果：推荐的档案 + 一句人话解释 + 真实跑一遍的统计。</summary>
 public sealed class ProfileGuess

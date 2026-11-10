@@ -27,7 +27,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 public static class SourceParser
 {

@@ -18,7 +18,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-namespace PairDesk.App.UI;
+namespace YiTai.App.UI;
 
 public sealed class GrowTextBox : TextBox
 {

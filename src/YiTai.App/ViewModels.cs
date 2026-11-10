@@ -22,9 +22,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media;
-using PairDesk.Core;
+using YiTai.Core;
 
-namespace PairDesk.App;
+namespace YiTai.App;
 
 public sealed class SentenceVm : INotifyPropertyChanged
 {

@@ -8,7 +8,7 @@
      PerMonitorV2：拖动到另一块不同缩放的显示器上，字重新变清晰。
      ============================================================ -->
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="1.0.0.0" name="PairDesk.app" />
+  <assemblyIdentity version="1.0.0.0" name="YiTai.app" />
 
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>

@@ -12,7 +12,7 @@
 //     项目根目录 / 原文文件模式 / 译稿文件模式 / 备份目录 / 状态目录 / 章数
 // 代码里一个都不许出现。
 //
-// 配置默认落在 %APPDATA%\PairDesk\config.json，不写进仓库目录
+// 配置默认落在 %APPDATA%\YiTai\config.json，不写进仓库目录
 // （免得用户 clone 完一运行就多出个 config.json 污染 git status）。
 // ============================================================
 
@@ -20,7 +20,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 public sealed class DeskConfig
 {
@@ -72,7 +72,7 @@ public sealed class DeskConfig
     // ---------------------------------------------------------------- 位置
 
     public static string DefaultDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PairDesk");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YiTai");
 
     public static string DefaultPath => Path.Combine(DefaultDir, "config.json");
 

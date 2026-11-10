@@ -23,7 +23,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 public static class MarkdownText
 {

@@ -28,7 +28,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
-namespace PairDesk.Core;
+namespace YiTai.Core;
 
 public static class TextFile
 {
@@ -97,7 +97,7 @@ public static class TextFile
         if (string.IsNullOrEmpty(dir)) throw new InvalidOperationException("目标路径没有目录：" + path);
         Directory.CreateDirectory(dir);
 
-        string tmp = Path.Combine(dir, "." + Path.GetFileName(path) + ".pairdesk.tmp");
+        string tmp = Path.Combine(dir, "." + Path.GetFileName(path) + ".yitai.tmp");
 
         try
         {

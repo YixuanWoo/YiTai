@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- ============================================================
-       PairDesk.Tests —— 不依赖任何测试框架的冒烟测试
+       YiTai.Tests —— 不依赖任何测试框架的冒烟测试
        ============================================================
        故意不用 xUnit / NUnit：这个项目要"下载下来就能验"，
        少一个第三方包，就少一层 restore 失败的可能。
@@ -15,11 +15,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <RootNamespace>PairDesk.Tests</RootNamespace>
+    <RootNamespace>YiTai.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\PairDesk.Core\PairDesk.Core.csproj" />
+    <ProjectReference Include="..\..\src\YiTai.Core\YiTai.Core.csproj" />
   </ItemGroup>
 
 </Project>

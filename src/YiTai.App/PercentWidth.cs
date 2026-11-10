@@ -10,7 +10,7 @@ using System;
 using System.Globalization;
 using System.Windows.Data;
 
-namespace PairDesk.App;
+namespace YiTai.App;
 
 public sealed class PercentWidth : IMultiValueConverter
 {

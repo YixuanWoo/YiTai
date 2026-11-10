@@ -9,7 +9,7 @@
      为什么不敢做全自动：认错的后果是注混进正文，而那正是你要复制
      去问 AI 的文本，混进去肉眼看不出来 —— 这是最坏的一种失败。
      ============================================================ -->
-<Window x:Class="PairDesk.App.ImportWindow"
+<Window x:Class="YiTai.App.ImportWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="导入原文"

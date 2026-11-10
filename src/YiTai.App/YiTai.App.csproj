@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- ============================================================
-       PairDesk.App —— 界面层（WPF，Windows only）
+       YiTai.App —— 界面层（WPF，Windows only）
        ============================================================
        为什么是 WPF 而不是 WinForms：
          · 用户自己工程里的「写作台」模块就是 WPF，骨架能直接搬
@@ -17,8 +17,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <RootNamespace>PairDesk.App</RootNamespace>
-    <AssemblyName>PairDesk</AssemblyName>
+    <RootNamespace>YiTai.App</RootNamespace>
+    <AssemblyName>YiTai</AssemblyName>
     <Version>0.1.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PairDesk.Core\PairDesk.Core.csproj" />
+    <ProjectReference Include="..\YiTai.Core\YiTai.Core.csproj" />
   </ItemGroup>
 
 </Project>
