@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // MainWindow.xaml.cs —— 主窗口行为（左原文 / 右整篇译稿）
 // ============================================================
 //
@@ -51,7 +51,7 @@ public partial class MainWindow : Window
     public MainWindow(DeskConfig cfg)
     {
         _cfg = cfg;
-        _store = new ChapterStore(cfg.ToPaths());
+        _store = new ChapterStore(cfg.ToPaths(), cfg.ToProfile());
 
         InitializeComponent();
 
@@ -371,25 +371,17 @@ public partial class MainWindow : Window
 
     private void OnSwitchProject(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "选一份原文文件（例如 ch03.md）",
-            Filter = "Markdown / 文本 (*.md;*.txt)|*.md;*.txt|所有文件 (*.*)|*.*",
-        };
-
-        if (dlg.ShowDialog(this) != true) return;
         if (_dirty) SaveQuietly();
 
-        var derived = ProjectLocator.DeriveFromSourceFile(dlg.FileName);
-        _cfg.ProjectRoot = derived.ProjectRoot;
-        _cfg.SourcePattern = derived.SourcePattern;
-        _cfg.TranslationPattern = derived.TranslationPattern;
-        _cfg.BackupPattern = derived.BackupPattern;
-        _cfg.StatePattern = derived.StatePattern;
+        // 换项目也走导入窗口：先看清格式，再决定怎么读（不再"盲选文件"）
+        var dlg = new ImportWindow();
+        if (dlg.ShowDialog() != true || dlg.Result == null) return;
+
+        App.ApplyImport(_cfg, dlg.Result);
 
         try { _cfg.Save(DeskConfig.DefaultPath); } catch { /* 存不下也能继续用 */ }
 
-        _store = new ChapterStore(_cfg.ToPaths());
+        _store = new ChapterStore(_cfg.ToPaths(), _cfg.ToProfile());
         BuildChapterList();
         LoadChapter(_chapters.Count > 0 ? _chapters[0].Number : 1);
     }

@@ -45,6 +45,26 @@ public sealed class DeskConfig
     /// <summary>上次打开的章，重开时接着干。</summary>
     public int LastChapter { get; set; } = 1;
 
+    // ---------------------------------------------------------------- 源格式档案
+    //
+    // 这几项决定"原文怎么读"。默认值是「拉丁切句 + 句后内嵌括号注」，
+    // 也就是最保守、最不可能认错的那一档；导入时由探测结果改写。
+
+    /// <summary>注的写法：InlineBoldParen / TrailingCards / Footnotes / None。</summary>
+    public NoteStyle Notes { get; set; } = NoteStyle.InlineBoldParen;
+
+    /// <summary>切句口径：LatinSentence / CjkSentence / Paragraph / Line。</summary>
+    public SplitMode Split { get; set; } = SplitMode.LatinSentence;
+
+    /// <summary>额外自定义正则（第一个捕获组 = 注文；空 = 不用）。</summary>
+    public string CustomNotePattern { get; set; } = "";
+
+    /// <summary>是否启用"本章看点"这类中文本地化识别。</summary>
+    public bool ChineseHeuristics { get; set; } = true;
+
+    /// <summary>标题行前缀。</summary>
+    public string TitlePrefix { get; set; } = "# ";
+
     /// <summary>窗口尺寸。记事本级的小体贴。</summary>
     public double WindowWidth { get; set; } = 1240;
     public double WindowHeight { get; set; } = 830;
@@ -65,12 +85,25 @@ public sealed class DeskConfig
         StatePattern = StatePattern,
     };
 
+    /// <summary>把配置里的解析口径装成一份档案，交给 ChapterStore。</summary>
+    public SourceProfile ToProfile() => new()
+    {
+        Notes = Notes,
+        Split = Split,
+        CustomNotePattern = CustomNotePattern,
+        ChineseHeuristics = ChineseHeuristics,
+        TitlePrefix = TitlePrefix,
+    };
+
     // ---------------------------------------------------------------- 读写
 
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+
+        // 枚举写成字符串（Notes: "TrailingCards"），配置才看得懂、也才改得动
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
     };
 
     /// <summary>

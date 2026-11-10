@@ -114,7 +114,15 @@ public sealed class ChapterStore
 
     public DeskPaths Paths { get; }
 
-    public ChapterStore(DeskPaths paths) => Paths = paths;
+    public ChapterStore(DeskPaths paths) : this(paths, SourceProfile.Default) { }
+
+    public ChapterStore(DeskPaths paths, SourceProfile profile)
+    {
+        Paths = paths;
+        _profile = profile;
+    }
+
+    private readonly SourceProfile _profile;
 
     // ================================================================ 打开
 
@@ -127,7 +135,7 @@ public sealed class ChapterStore
         if (!srcInfo.Exists)
             throw new FileNotFoundException("找不到这一章的原文文件：" + srcPath, srcPath);
 
-        var parsed = SourceParser.Parse(srcInfo.Text);
+        var parsed = SourceParser.Parse(srcInfo.Text, _profile);
         if (parsed.Segments.Count == 0)
             throw new InvalidDataException("这一章的原文切不出任何句子（文件可能是空的或格式变了）：" + srcPath);
 
@@ -335,7 +343,7 @@ public sealed class ChapterStore
             string src = Paths.SourcePath(n);
             if (File.Exists(src))
             {
-                try { brief.Total = SourceParser.Parse(TextFile.Read(src).Text).Segments.Count; }
+                try { brief.Total = SourceParser.Parse(TextFile.Read(src).Text, _profile).Segments.Count; }
                 catch { brief.Total = 0; }
             }
 

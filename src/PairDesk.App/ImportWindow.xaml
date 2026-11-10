@@ -1,0 +1,127 @@
+<!-- ============================================================
+     ImportWindow.xaml = 导入原文（探测 → 预览 → 确认）
+     ============================================================
+     设计要点（也是这个软件"能不能通用"的答案）：
+       不承诺"任意格式全自动识别"，而是把猜测的结果**当场摊开**给你看：
+       切成几句、剥出几条注、第一句长什么样、注挂在哪句上。
+       认错了就换一档或填一条正则，下面的预览立刻重算。
+
+     为什么不敢做全自动：认错的后果是注混进正文，而那正是你要复制
+     去问 AI 的文本，混进去肉眼看不出来 —— 这是最坏的一种失败。
+     ============================================================ -->
+<Window x:Class="PairDesk.App.ImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="导入原文"
+        Width="880" Height="660"
+        Background="{DynamicResource BgDeep}"
+        Foreground="{DynamicResource TextMain}"
+        FontFamily="Microsoft YaHei"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True"
+        ShowInTaskbar="False">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 标题 -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="选一份原文，我先猜它是怎么排的" FontSize="17" FontWeight="SemiBold"/>
+            <TextBlock Text="猜完不直接落库：下面会真跑一遍，把切成几句、剥出几条注、注挂在哪句上摆给你看。认错了就换一档。"
+                       FontSize="11.5" Margin="0,5,0,0" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFaint}"/>
+        </StackPanel>
+
+        <!-- 文件 -->
+        <Border Grid.Row="1" Background="{DynamicResource BgCard}"
+                BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                CornerRadius="8" Padding="12,9">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="浏览…" Style="{StaticResource Btn}"
+                        Click="OnPickFile" Margin="8,0,0,0"/>
+                <TextBlock x:Name="TxtPath" Text="（还没选文件）" FontSize="12"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource TextDim}"/>
+            </DockPanel>
+        </Border>
+
+        <!-- 两档设定 -->
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="210"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="210"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="注的写法" FontSize="11.5"
+                       VerticalAlignment="Center" Margin="0,0,8,0"
+                       Foreground="{DynamicResource TextDim}"/>
+            <ComboBox x:Name="CmbNotes" Grid.Column="1" FontSize="12"
+                      SelectionChanged="OnSettingChanged">
+                <ComboBoxItem Content="句后内嵌括号注 （**〔n〕…**）" Tag="InlineBoldParen"/>
+                <ComboBoxItem Content="文末卡片区（--- 之后 〔n〕 起头）" Tag="TrailingCards"/>
+                <ComboBoxItem Content="Markdown 脚注 [^n]:" Tag="Footnotes"/>
+                <ComboBoxItem Content="不认注，整篇当正文" Tag="None"/>
+            </ComboBox>
+
+            <TextBlock Grid.Column="2" Text="句子怎么切" FontSize="11.5"
+                       VerticalAlignment="Center" Margin="18,0,8,0"
+                       Foreground="{DynamicResource TextDim}"/>
+            <ComboBox x:Name="CmbSplit" Grid.Column="3" FontSize="12"
+                      SelectionChanged="OnSettingChanged">
+                <ComboBoxItem Content="西文句末标点（. ! ? …）" Tag="LatinSentence"/>
+                <ComboBoxItem Content="中日文句末标点（。！？…）" Tag="CjkSentence"/>
+                <ComboBoxItem Content="按空行分段，不切句" Tag="Paragraph"/>
+                <ComboBoxItem Content="一行一句" Tag="Line"/>
+            </ComboBox>
+
+            <Button Grid.Column="4" Content="重新探测" Style="{StaticResource Btn}"
+                    HorizontalAlignment="Right" Click="OnReProbe"/>
+        </Grid>
+
+        <!-- 自定义正则 -->
+        <DockPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock DockPanel.Dock="Left" Text="额外正则" FontSize="11.5"
+                       VerticalAlignment="Center" Margin="0,0,8,0"
+                       Foreground="{DynamicResource TextDim}"/>
+            <TextBox x:Name="TbxPattern" FontSize="12" Padding="6,5"
+                     TextChanged="OnPatternChanged"
+                     ToolTip="可选。第一个捕获组当注文，例如：（注：([^）]*)）"/>
+        </DockPanel>
+
+        <!-- 预览 -->
+        <Border Grid.Row="4" Background="{DynamicResource BgCard}"
+                BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                CornerRadius="8" Margin="0,12,0,0">
+            <DockPanel>
+                <TextBlock x:Name="TxtStat" DockPanel.Dock="Top" FontSize="11.5"
+                           Margin="14,10,14,4" TextWrapping="Wrap"
+                           Foreground="{DynamicResource Accent}"/>
+                <TextBox x:Name="TbxPreview" DockPanel.Dock="Bottom"
+                         IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                         FontFamily="Consolas" FontSize="12"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         Padding="14,4,14,12"
+                         Foreground="{DynamicResource TextDim}"/>
+            </DockPanel>
+        </Border>
+
+        <!-- 底部按钮 -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button Content="取消" Style="{StaticResource Btn}" IsCancel="True"
+                    Click="OnCancel" Margin="0,0,8,0"/>
+            <Button x:Name="BtnOk" Content="就用这一份" Style="{StaticResource BtnAccent}"
+                    IsDefault="True" Click="OnAccept"/>
+        </StackPanel>
+    </Grid>
+</Window>

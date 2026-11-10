@@ -49,6 +49,75 @@ public sealed class ParsedSource
     public int MergedFragments { get; set; }
 }
 
+/// <summary>
+/// 原文的风格档案 —— 决定"注怎么认""句子怎么切"。
+/// 第一版把这两件事写死在代码里，等于只认一本书；现在它们是数据。
+///
+/// 说实话的地方：这不是"任意格式全自动"。它是"先给一个最可能的猜测，
+/// 导入时把结果摊开给你看，认错了你换一档或填一条正则"。
+/// 因为认错的后果是注混进正文，而那正是要复制去问 AI 的文本。
+/// </summary>
+public sealed class SourceProfile
+{
+    /// <summary>注长什么样。</summary>
+    public NoteStyle Notes { get; set; } = NoteStyle.InlineBoldParen;
+
+    /// <summary>句子怎么切。</summary>
+    public SplitMode Split { get; set; } = SplitMode.LatinSentence;
+
+    /// <summary>额外一层自定义正则（第一个捕获组 = 注文；空 = 不用）。</summary>
+    public string CustomNotePattern { get; set; } = "";
+
+    /// <summary>是否启用中文本地化启发式（"本章看点"那一行）。</summary>
+    public bool ChineseHeuristics { get; set; } = true;
+
+    /// <summary>标题行前缀（"# " 这种；空 = 不识别标题）。</summary>
+    public string TitlePrefix { get; set; } = "# ";
+
+    public static SourceProfile Default => new();
+
+    public SourceProfile Clone() => new()
+    {
+        Notes = Notes,
+        Split = Split,
+        CustomNotePattern = CustomNotePattern,
+        ChineseHeuristics = ChineseHeuristics,
+        TitlePrefix = TitlePrefix,
+    };
+}
+
+/// <summary>注的写法。</summary>
+public enum NoteStyle
+{
+    /// <summary>句后内嵌：（**〔3〕…**） —— 我后期章节的写法，也是默认。</summary>
+    InlineBoldParen,
+
+    /// <summary>正文之后 --- 分隔的卡片区，块首 〔n〕 —— 我早期章节的写法。</summary>
+    TrailingCards,
+
+    /// <summary>Markdown 脚注：定义 [^1]: …，正文里 [^1] 引用。</summary>
+    Footnotes,
+
+    /// <summary>不认注：整篇都是正文（注会在正文里原样显示）。</summary>
+    None,
+}
+
+/// <summary>切句口径。</summary>
+public enum SplitMode
+{
+    /// <summary>拉丁句末标点（. ! ? …），需要后面跟空白。</summary>
+    LatinSentence,
+
+    /// <summary>中日文句末标点（。！？…），不需要空格。</summary>
+    CjkSentence,
+
+    /// <summary>按空行分段，一段一行（不切句）。</summary>
+    Paragraph,
+
+    /// <summary>按单换行切，一行一句。</summary>
+    Line,
+}
+
 /// <summary>一份文本文件被读进来时的原始面貌（回写要照原样还回去）。</summary>
 public sealed class TextFileInfo
 {

@@ -53,6 +53,16 @@ internal static class Program
         TestRawSave();
 
         Console.WriteLine();
+        Console.WriteLine("== 6. 文末卡片注（我早期章节的写法，第一版根本读不进来）==");
+        TestCardNotes("01");
+        TestCardNotes("02");
+
+        Console.WriteLine();
+        Console.WriteLine("== 7. 格式探测与其它切句口径 ==");
+        TestProbe();
+        TestOtherModes();
+
+        Console.WriteLine();
         if (_fail == 0)
         {
             Console.WriteLine("全部通过 ✓");
@@ -353,6 +363,95 @@ internal static class Program
 
         Console.WriteLine($"   沙箱：{sandbox}");
         try { Directory.Delete(sandbox, recursive: true); } catch { /* 留着也不影响 */ }
+    }
+
+    // ---------------------------------------------------------------- 6
+
+    /// <summary>
+    /// 早期章节是「正文 + --- + 文末〔n〕卡片」。
+    /// 第一版对这份文件只做"截断丢弃"，等于注释全丢；现在必须真的读进来。
+    /// </summary>
+    private static void TestCardNotes(string ch)
+    {
+        string path = Path.Combine(Fixture, "01-原文", "按章", "英文-带标注", $"ch{ch}.md");
+        var info = TextFile.Read(path);
+        if (!info.Exists) { Check(false, $"ch{ch} 原文存在"); return; }
+
+        var profile = new SourceProfile { Notes = NoteStyle.TrailingCards };
+        var parsed = SourceParser.Parse(info.Text, profile);
+
+        int noted = 0;
+        foreach (var s in parsed.Segments) if (s.Note.Length > 0) noted++;
+
+        Check(parsed.Segments.Count >= 20, $"ch{ch} 切出 {parsed.Segments.Count} 句（应 ≥20）");
+        Check(noted >= 3, $"ch{ch} 有 {noted} 句挂上了卡片注（应 ≥3）");
+
+        bool anyAnchorLeft = false;
+        foreach (var s in parsed.Segments)
+        {
+            if (s.En.Contains("〔") || s.En.Contains("---")) { anyAnchorLeft = true; break; }
+        }
+        Check(!anyAnchorLeft, $"ch{ch} 正文里没有残留的〔n〕锚点或分隔线");
+
+        // 卡片区本身不能漏进正文
+        bool cardTextLeaked = false;
+        foreach (var s in parsed.Segments)
+            if (s.En.Contains("译注：", StringComparison.Ordinal)) { cardTextLeaked = true; break; }
+        Check(!cardTextLeaked, $"ch{ch} 卡片区没漏进正文");
+
+        Console.WriteLine($"   ch{ch}: {parsed.Segments.Count} 句 / {noted} 句带注 / 标题「{Trunc(parsed.Title, 24)}」");
+    }
+
+    // ---------------------------------------------------------------- 7
+
+    private static void TestProbe()
+    {
+        // ch01 是卡片格式，ch03 是内嵌格式：探测器必须分得出来
+        string p1 = Path.Combine(Fixture, "01-原文", "按章", "英文-带标注", "ch01.md");
+        string p3 = Path.Combine(Fixture, "01-原文", "按章", "英文-带标注", "ch03.md");
+
+        if (File.Exists(p1))
+        {
+            var g1 = SourceProbe.Guess(TextFile.Read(p1).Text);
+            Check(g1.Profile.Notes == NoteStyle.TrailingCards, $"ch01 探测为卡片注（实际 {g1.Profile.Notes}）");
+            Check(g1.SentenceCount > 0, $"ch01 探测后能切出 {g1.SentenceCount} 句");
+        }
+
+        if (File.Exists(p3))
+        {
+            var g3 = SourceProbe.Guess(TextFile.Read(p3).Text);
+            Check(g3.Profile.Notes == NoteStyle.InlineBoldParen, $"ch03 探测为内嵌注（实际 {g3.Profile.Notes}）");
+            Check(g3.NotedSentenceCount >= 10, $"ch03 有 {g3.NotedSentenceCount} 句带注");
+            Check(g3.Profile.Split == SplitMode.LatinSentence, "ch03 按拉丁标点切句");
+            Console.WriteLine($"   探测解释：{g3.Explain}");
+        }
+    }
+
+    private static void TestOtherModes()
+    {
+        // 中文原文：按。！？切
+        const string zh = "第一句。第二句！第三句？";
+        var p = SourceParser.Parse(zh, new SourceProfile { Notes = NoteStyle.None, Split = SplitMode.CjkSentence });
+        Check(p.Segments.Count == 3, $"中文切句得到 {p.Segments.Count} 句（应 3）");
+
+        // 按段落：空行分段，不切句
+        const string paras = "第一段第一句。第一段第二句。\n\n第二段只有一句。\n\n第三段。";
+        var p2 = SourceParser.Parse(paras, new SourceProfile { Notes = NoteStyle.None, Split = SplitMode.Paragraph });
+        Check(p2.Segments.Count == 3, $"按段落得到 {p2.Segments.Count} 段（应 3）");
+
+        // 按行
+        const string lines = "第一行\n第二行\n第三行";
+        var p3 = SourceParser.Parse(lines, new SourceProfile { Notes = NoteStyle.None, Split = SplitMode.Line });
+        Check(p3.Segments.Count == 3, $"按行得到 {p3.Segments.Count} 行（应 3）");
+
+        // 脚注
+        const string foot = "A sentence here.[^1]\n\nAnother sentence.[^2]\n\n[^1]: first note\n[^2]: second note";
+        var p4 = SourceParser.Parse(foot, new SourceProfile { Notes = NoteStyle.Footnotes, Split = SplitMode.LatinSentence });
+        int noted = 0;
+        foreach (var s in p4.Segments) if (s.Note.Length > 0) noted++;
+        Check(p4.Segments.Count == 2, $"脚注文本切出 {p4.Segments.Count} 句（应 2）");
+        Check(noted == 2, $"脚注挂上了 {noted} 句（应 2）");
+        Check(!p4.CleanBody.Contains("[^"), "正文里没有脚注引用残留");
     }
 
     // ---------------------------------------------------------------- 辅助
