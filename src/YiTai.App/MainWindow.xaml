@@ -60,6 +60,9 @@
                 Padding="14,9">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BtnAddPane" Content="＋ 对照栏" Style="{StaticResource Btn}"
+                            Click="OnAddPane" Margin="0,0,8,0"
+                            ToolTip="再加一栏：资料、原文、别的语言的译文都能摊在同一屏"/>
                     <Button x:Name="BtnSave" Content="保存" Style="{StaticResource BtnAccent}"
                             Click="OnSave" Margin="0,0,8,0"/>
                     <Button x:Name="BtnImport" Content="导入源文件" Style="{StaticResource Btn}"
@@ -77,66 +80,61 @@
             </DockPanel>
         </Border>
 
-        <!-- ======================================================== 双栏 -->
-        <Grid Grid.Row="2" Margin="12,12,12,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="46*" MinWidth="260"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="54*" MinWidth="320"/>
-            </Grid.ColumnDefinitions>
+        <!-- ======================================================== 多栏对照 -->
+        <!--
+            列由代码填（MainWindow.Panes.cs）：
+              第 0、2、4… 列 = 对照栏（资料 / 原文 / 别的语言的译文；可增减、可左右调）
+              每两栏之间夹一条可拖的分隔条
+              最右一列 = 译文栏，钉死，只有它能写
 
-            <!-- 左：原文 -->
-            <Border Grid.Column="0" Background="{DynamicResource BgCard}"
+            译文栏写在 XAML 里而不是代码里，是因为它的自动保存、冲突处理
+            都钉在这几个控件上（TbxTranslation / CmbSources），动态生成反而更脆。
+        -->
+        <Grid x:Name="PanesGrid" Grid.Row="2" Margin="12,12,12,0">
+
+            <!-- 译文：永远最右 -->
+            <Border x:Name="TransPane" Background="{DynamicResource BgCard}"
                     BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8">
                 <DockPanel>
-                    <Border DockPanel.Dock="Top" Padding="14,10,10,8"
+                    <Border DockPanel.Dock="Top" Padding="14,9,10,8"
                             BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
                         <DockPanel>
-                            <TextBlock DockPanel.Dock="Left" Text="原文" FontSize="12.5"
-                                       VerticalAlignment="Center" Margin="0,0,10,0"
-                                       Foreground="{DynamicResource TextDim}"/>
-                            <TextBlock x:Name="TxtSourceInfo" DockPanel.Dock="Right" FontSize="11"
-                                       VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextFaint}"/>
-                            <ComboBox x:Name="CmbSources" FontSize="12.5" IsEnabled="False"
-                                      SelectionChanged="OnSourceChanged"
-                                      ToolTip="项目里导入的源文件"/>
-                        </DockPanel>
-                    </Border>
-
-                    <!-- 整篇原文：只读、可选中、Ctrl+C 复制 -->
-                    <TextBox x:Name="TbxSource" IsReadOnly="True" BorderThickness="0"
-                             Background="Transparent" TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                             FontFamily="Consolas" FontSize="13.5" Padding="14,10,12,16"
-                             Foreground="{DynamicResource TextMain}"
-                             TextBlock.LineHeight="24"/>
-                </DockPanel>
-            </Border>
-
-            <GridSplitter Grid.Column="1" Style="{StaticResource SplitterThin}" ResizeBehavior="PreviousAndNext"/>
-
-            <!-- 右：译文 -->
-            <Border Grid.Column="2" Background="{DynamicResource BgCard}"
-                    BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8">
-                <DockPanel>
-                    <Border DockPanel.Dock="Top" Padding="14,10,10,8"
-                            BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
-                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtTrPath" FontSize="11" MaxWidth="300"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFaint}"/>
+                                <Button x:Name="BtnPreview" Content="预览" Style="{StaticResource BtnMini}"
+                                        Click="OnTogglePreview" Margin="6,0,0,0"
+                                        ToolTip="把译文按 Markdown 样式渲染出来看；再点一下回到编辑"/>
+                            </StackPanel>
                             <TextBlock DockPanel.Dock="Left" Text="译文" FontSize="12.5"
                                        VerticalAlignment="Center" Margin="0,0,10,0"
                                        Foreground="{DynamicResource TextDim}"/>
-                            <TextBlock x:Name="TxtTrPath" DockPanel.Dock="Right" FontSize="11"
-                                       TextTrimming="CharacterEllipsis" MaxWidth="420"
-                                       VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextFaint}" HorizontalAlignment="Right"/>
-                            <TextBlock Text="所见即所存" FontSize="11"
-                                       Foreground="{DynamicResource TextFaint}" TextTrimming="CharacterEllipsis"/>
+                            <ComboBox x:Name="CmbSources" FontSize="12.5" IsEnabled="False"
+                                      SelectionChanged="OnSourceChanged"
+                                      ToolTip="切换要翻译的章节（「跟随当前章」的对照栏会一起换）"/>
                         </DockPanel>
                     </Border>
 
-                    <TextBox x:Name="TbxTranslation" Style="{StaticResource DocBox}"
-                             IsEnabled="False" TextChanged="OnTranslationChanged"/>
+                    <!-- 底部：实时字数（编辑区、选中都算） -->
+                    <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource Line}"
+                            BorderThickness="0,1,0,0" Padding="14,4">
+                        <TextBlock x:Name="TxtTrStat" FontSize="11.5"
+                                   Foreground="{DynamicResource TextDim}"/>
+                    </Border>
+
+                    <!-- 编辑区和预览叠在同一格里：只切可见性，文本一直留在 TextBox 里，切来切去不会丢 -->
+                    <Grid>
+                        <TextBox x:Name="TbxTranslation" Style="{StaticResource DocBox}"
+                                 IsEnabled="False" TextChanged="OnTranslationChanged"
+                                 SelectionChanged="OnTranslationSelectionChanged"/>
+                        <FlowDocumentScrollViewer x:Name="PreviewDoc" Visibility="Collapsed"
+                                                  IsToolBarVisible="False" IsSelectionEnabled="True"
+                                                  Background="{DynamicResource BgCard}"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"/>
+                    </Grid>
                 </DockPanel>
             </Border>
         </Grid>

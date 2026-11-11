@@ -8,6 +8,7 @@
 // ============================================================
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -20,6 +21,18 @@ public sealed class AppSettings
 
     /// <summary>上次选中的源文件 Id。</summary>
     public string LastSourceId { get; set; } = "";
+
+    /// <summary>
+    /// 每个项目上次开着的对照栏（键是项目根的小写全路径）。
+    /// 按项目分开记：换个项目不该把上一本排列搬过去。
+    /// </summary>
+    public Dictionary<string, List<RefDocSpec>> PanesByProject { get; set; } = new();
+
+    /// <summary>
+    /// 每个项目上次的栏宽比例（键同上，值依次是 各对照栏…、译文栏）。
+    /// 只用来恢复"上次拖成什么样"，缺了就用默认比例。
+    /// </summary>
+    public Dictionary<string, List<double>> PaneWeightsByProject { get; set; } = new();
 
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 860;

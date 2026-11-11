@@ -38,10 +38,13 @@ public partial class MainWindow : Window
 
     private bool _dirty;        // 有未保存的改动
     private bool _loading;      // 正在程序性填内容，别把 TextChanged 当用户输入
+    private bool _previewing;   // 译文栏是否切到了"渲染预览"（编辑区仍在，只是藏起来）
 
     public MainWindow()
     {
         InitializeComponent();
+
+        InitPanes();   // 先摆一排空栏；打开上次项目时再按项目记忆替换
 
         Width = _settings.WindowWidth;
         Height = _settings.WindowHeight;
@@ -126,6 +129,9 @@ public partial class MainWindow : Window
     /// <summary>装载一个项目：刷新标题、源文件下拉、默认选中上次那一份。</summary>
     private void OpenProject(string rootOrProjectFile, string? wantSourceId)
     {
+        SavePaneLayout();   // 先把上一个项目的栏位记下来，再换
+        _current = null;    // 旧项目的章节不再算数，免得新项目还没装载时栏里显示上一本的字
+
         _store = ProjectStore.Open(rootOrProjectFile);
         _settings.LastProjectRoot = _store.Root;
 
@@ -138,6 +144,8 @@ public partial class MainWindow : Window
         CmbSources.ItemsSource = _store.Meta.Sources;
         CmbSources.DisplayMemberPath = "FileName";
         _loading = false;
+
+        LoadPanesForProject();   // 这个项目上次摆了几栏，就摆几栏
 
         bool hasSources = _store.Meta.Sources.Count > 0;
         CmbSources.IsEnabled = hasSources;
@@ -197,6 +205,7 @@ public partial class MainWindow : Window
             _loading = false;
 
             LoadSource(added[0]);
+            RebuildPanes();   // 下拉里要出现刚导入的这几份
             Status($"已导入 {added.Count} 个文件");
         }
         catch (Exception ex)
@@ -243,6 +252,7 @@ public partial class MainWindow : Window
             msg += "；这些章号有多个候选，没替你猜：" + string.Join("、", skipped);
         Status(msg);
         if (_current != null) LoadSource(_current);
+        RebuildPanes();   // 译文指向变了，下拉里的「译文 · …」要跟着更新
     }
 
     // ================================================================ 切换源文件
@@ -267,23 +277,19 @@ public partial class MainWindow : Window
         _store!.Meta.LastSourceId = entry.Id;
         _store.Save();
 
-        var src = TextFile.Read(_store.SourcePath(entry));
         string trPath = _store.TranslationPath(entry);
         _doc = TranslationStore.Load(trPath);
 
         _loading = true;
-        TbxSource.Text = src.Exists ? src.Text : "";
         TbxTranslation.Text = _doc.TextLf;
         _loading = false;
 
         _dirty = false;
         _autoSave.Stop();
 
-        TxtSourceInfo.Text = src.Exists
-            ? $"{TextStats.CountChars(src.Text)} 字 · {TextStats.CountParagraphs(src.Text)} 段 · 只读"
-            : "读不到这个文件";
-
         TxtTrPath.Text = RelativeForDisplay(trPath);
+        RefreshPanes();   // 「跟随当前章」的那些对照栏跟着换
+        if (_previewing) RefreshPreview();   // 预览态下切章，画面也得跟着翻
         UpdateStat();
         Status(_doc.Exists ? "已载入" : "译文文件还不存在，一开写就会建");
     }
@@ -412,6 +418,7 @@ public partial class MainWindow : Window
             _dirty = false;
 
             TxtTrPath.Text = RelativeForDisplay(dlg.FileName);
+            RefreshPanes();   // 有栏正看着这份译文的话，路径变了要重读
             Status("已另存为 " + dlg.FileName);
             TxtSaveState.Text = "已保存（另存）";
         }
@@ -426,7 +433,57 @@ public partial class MainWindow : Window
     private void UpdateStat()
     {
         string t = TbxTranslation.Text;
-        TxtStat.Text = $"{TextStats.CountChars(t)} 字 · {TextStats.CountParagraphs(t)} 段";
+        int chars = TextStats.CountChars(t);
+        int paras = TextStats.CountParagraphs(t);
+
+        string s = $"{chars:N0} 字 · {paras} 段";
+
+        int sel = TbxTranslation.SelectionLength;
+        if (sel > 0)
+            s += $" · 选中 {TextStats.CountChars(TbxTranslation.SelectedText):N0} 字";
+
+        TxtStat.Text = s;     // 状态栏
+        TxtTrStat.Text = s;   // 译文栏自己脚下这个更顺手
+    }
+
+    /// <summary>选中一段就刷一次：译的时候最常问的是"这一句多少字"。</summary>
+    private void OnTranslationSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        UpdateStat();
+    }
+
+    // ================================================================ 译文预览
+
+    private void OnTogglePreview(object sender, RoutedEventArgs e)
+    {
+        _previewing = !_previewing;
+
+        if (_previewing)
+        {
+            RefreshPreview();
+            BtnPreview.Content = "回到编辑";
+            TbxTranslation.Visibility = Visibility.Collapsed;
+            PreviewDoc.Visibility = Visibility.Visible;
+            return;
+        }
+
+        PreviewDoc.Visibility = Visibility.Collapsed;
+        TbxTranslation.Visibility = Visibility.Visible;
+        BtnPreview.Content = "预览";
+    }
+
+    /// <summary>把当前译文按 Markdown 画一遍。渲染失败就当没这回事，绝不影响编辑区。</summary>
+    private void RefreshPreview()
+    {
+        try
+        {
+            PreviewDoc.Document = MdRender.Build(MdParser.Parse(TbxTranslation.Text), MakeStyleFor(15, 1.8));
+        }
+        catch (Exception)
+        {
+            // 预览只是看一眼，出问题也不该打断翻译
+        }
     }
 
     private void Status(string msg) => TxtSaveState.Text = msg;
@@ -471,6 +528,7 @@ public partial class MainWindow : Window
         _settings.WindowHeight = ActualHeight;
         _settings.WindowMaximized = WindowState == WindowState.Maximized;
         if (_store != null) _settings.LastProjectRoot = _store.Root;
+        SavePaneLayout();   // 栏位就和窗口尺寸一起记下来
         _settings.Save();
 
         base.OnClosing(e);
@@ -490,6 +548,10 @@ public partial class MainWindow : Window
 
     private void SetEmptyState()
     {
+        _store = null;
+        _current = null;
+        _doc = null;
+
         Title = "译台";
         TxtProject.Text = "还没有打开项目";
         TxtProjectPath.Text = "文件 → 新建项目 / 打开项目";
@@ -499,18 +561,22 @@ public partial class MainWindow : Window
         MiSaveAs.IsEnabled = false;
         SetPanesEmpty("先从“文件 → 新建项目”开始：\n\n" +
                       "选一个文件夹当项目根，软件会在里面建 sources（原文）、translations（译文）、backups（备份）。\n" +
-                      "然后“导入源文件”把要翻的文件复制进去，左侧就显示原文，右侧写译文。");
+                      "然后“导入源文件”把要翻的文件复制进去，左边对照栏就显示原文，最右边写译文。");
     }
 
     private void SetPanesEmpty(string hint)
     {
+        _ = hint;   // 提示语现在由对照栏自己按状态给出，见 RefreshPanes
+
         _loading = true;
-        TbxSource.Text = hint;
         TbxTranslation.Text = "";
         _loading = false;
-        TxtSourceInfo.Text = "";
+
         TxtTrPath.Text = "";
         TxtStat.Text = "";
+        TxtTrStat.Text = "";
+        RefreshPanes();
+        if (_previewing) RefreshPreview();
     }
 
     private void OnExit(object sender, RoutedEventArgs e) => Close();
