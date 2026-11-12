@@ -29,21 +29,40 @@ public static class MdParser
         string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
         string[] lines = normalized.Split('\n');
 
-        var para = new StringBuilder();
+        var paraLines = new List<MdLine>();
         var code = new StringBuilder();
         var quote = new StringBuilder();
         bool inCode = false;
         MdBlock? list = null;
 
+        // 每一块在原文里的起始偏移（"译到哪了"的绿线靠它定位，见 MdBlock.SourceOffset）
+        int offset = 0;
+        int paraStart = -1;
+        int quoteStart = -1;
+        int codeStart = -1;
+
         void FlushPara()
         {
-            if (para.Length == 0) return;
-            string s = para.ToString().Trim();
-            para.Clear();
-            if (s.Length == 0) return;
+            if (paraLines.Count == 0) return;
 
-            var b = new MdBlock { Kind = MdBlockKind.Paragraph };
-            b.Inlines.AddRange(ParseInlines(s));
+            var b = new MdBlock { Kind = MdBlockKind.Paragraph, SourceOffset = paraStart };
+
+            // 段内的软换行照 Markdown 的规矩拼回去（一个空格），排版与"不标记"时完全一样；
+            // 每一截都带着自己的原文偏移，竖线因此能落在段中间某句话上。
+            for (int i = 0; i < paraLines.Count; i++)
+            {
+                if (i > 0)
+                {
+                    var gap = MdInline.Plain(" ");
+                    gap.SourceOffset = paraLines[i].SourceOffset - 1;   // 那个换行符的位置
+                    b.Inlines.Add(gap);
+                }
+
+                b.Inlines.AddRange(paraLines[i].Inlines);
+            }
+
+            paraLines.Clear();
+            paraStart = -1;
             doc.Blocks.Add(b);
         }
 
@@ -52,10 +71,13 @@ public static class MdParser
             if (quote.Length == 0) return;
             string s = quote.ToString().Trim();
             quote.Clear();
+            int start = quoteStart;
+            quoteStart = -1;
             if (s.Length == 0) return;
 
-            var b = new MdBlock { Kind = MdBlockKind.Quote };
-            b.Inlines.AddRange(ParseInlines(s));
+            var b = new MdBlock { Kind = MdBlockKind.Quote, SourceOffset = start };
+            // 引用是几行合并的，位置只能大概对（+2 约等于行首的 "> "）
+            b.Inlines.AddRange(ParseInlines(s, start + 2));
             doc.Blocks.Add(b);
         }
 
@@ -66,12 +88,17 @@ public static class MdParser
             {
                 Kind = MdBlockKind.CodeBlock,
                 Text = code.ToString().TrimEnd('\n'),
+                SourceOffset = codeStart,
             });
             code.Clear();
+            codeStart = -1;
         }
 
         foreach (string rawLine in lines)
         {
+            int lineStart = offset;
+            offset += rawLine.Length + 1;   // +1 是那一行结尾的 \n
+
             string line = rawLine.TrimEnd();
             string trim = line.Trim();
 
@@ -85,6 +112,7 @@ public static class MdParser
                 }
                 else
                 {
+                    if (code.Length == 0) codeStart = lineStart;
                     code.Append(rawLine);
                     code.Append('\n');
                 }
@@ -117,7 +145,7 @@ public static class MdParser
                 FlushPara();
                 FlushQuote();
                 list = null;
-                doc.Blocks.Add(new MdBlock { Kind = MdBlockKind.Divider });
+                doc.Blocks.Add(new MdBlock { Kind = MdBlockKind.Divider, SourceOffset = lineStart });
                 continue;
             }
 
@@ -129,8 +157,12 @@ public static class MdParser
                 FlushQuote();
                 list = null;
 
-                var b = new MdBlock { Kind = MdBlockKind.Heading, Level = level };
-                b.Inlines.AddRange(ParseInlines(trim.Substring(level).Trim()));
+                var b = new MdBlock { Kind = MdBlockKind.Heading, Level = level, SourceOffset = lineStart };
+
+                int hLead = line.Length - line.TrimStart().Length;
+                int k = level;                                  // 跳过 "#" 与其后的空格
+                while (k < trim.Length && trim[k] == ' ') k++;
+                b.Inlines.AddRange(ParseInlines(trim.Substring(level).Trim(), lineStart + hLead + k));
                 doc.Blocks.Add(b);
                 continue;
             }
@@ -142,6 +174,7 @@ public static class MdParser
                 list = null;
 
                 string body = trim.Substring(1).TrimStart();
+                if (quote.Length == 0) quoteStart = lineStart;
                 if (quote.Length > 0 && body.Length > 0) quote.Append(' ');
                 quote.Append(body);
                 continue;
@@ -155,25 +188,34 @@ public static class MdParser
 
                 if (list == null || list.Ordered != ordered)
                 {
-                    list = new MdBlock { Kind = MdBlockKind.List, Ordered = ordered };
+                    list = new MdBlock { Kind = MdBlockKind.List, Ordered = ordered, SourceOffset = lineStart };
                     doc.Blocks.Add(list);
                 }
 
                 var item = new MdItem { Number = number, Level = indent };
-                item.Inlines.AddRange(ParseInlines(itemText));
+                // 在行里找一下正文从哪儿开始，记准位置（"- " / "1. " 这些记号不算）
+                int at = line.IndexOf(itemText, StringComparison.Ordinal);
+                item.Inlines.AddRange(ParseInlines(itemText, lineStart + Math.Max(0, at)));
                 list.Items.Add(item);
                 continue;
             }
 
-            // -------------------------------------------------- 普通段落（软换行合并）
+            // -------------------------------------------------- 普通段落
+            //
+            // 先收成一行一行的 MdLine（每行记自己的绝对偏移、每截文字也记），
+            // 等段落结束时再拼回一整段（FlushPara）。这样渲染出来的段落与原来一模一样，
+            // 而"译到哪了"的竖线知道该立在哪一句话前面。
             list = null;
-            if (para.Length > 0)
+            if (paraLines.Count == 0) paraStart = lineStart;
+
+            int lead = rawLine.Length - rawLine.TrimStart().Length;   // 行首缩进（tab/空格）
+            var mdLine = new MdLine
             {
-                char last = para[para.Length - 1];
-                char first = trim[0];
-                if (!IsCjk(last) && !IsCjk(first)) para.Append(' ');
-            }
-            para.Append(trim);
+                SourceOffset = lineStart,
+                EndOffset = lineStart + line.Length,
+            };
+            mdLine.Inlines.AddRange(ParseInlines(trim, lineStart + lead));
+            paraLines.Add(mdLine);
         }
 
         FlushPara();
@@ -185,19 +227,33 @@ public static class MdParser
 
     // ==================================================================== 行内
 
-    /// <summary>解析一段里的粗体/斜体/代码/删除线/链接。认不出的记号原样留着。</summary>
-    public static List<MdInline> ParseInlines(string s)
+    /// <summary>
+    /// 解析一段里的粗体/斜体/代码/删除线/链接。认不出的记号原样留着。
+    /// <paramref name="baseOffset"/> 是这段文字在原文里的起点：
+    /// 每一截都记下自己的绝对位置，绿线才能落在段落中间的某一句话上。
+    /// </summary>
+    public static List<MdInline> ParseInlines(string s, int baseOffset = 0)
     {
         var list = new List<MdInline>();
         if (string.IsNullOrEmpty(s)) return list;
 
         var buf = new StringBuilder();
+        int bufStart = -1;   // 当前这段纯文字在 s 里的起点
 
         void FlushText()
         {
-            if (buf.Length == 0) return;
-            list.Add(MdInline.Plain(buf.ToString()));
+            if (buf.Length == 0)
+            {
+                bufStart = -1;
+                return;
+            }
+
+            var inl = MdInline.Plain(buf.ToString());
+            inl.SourceOffset = baseOffset + Math.Max(0, bufStart);
+            list.Add(inl);
+
             buf.Clear();
+            bufStart = -1;
         }
 
         int i = 0;
@@ -208,6 +264,7 @@ public static class MdParser
             // 反斜杠转义：\* \_ \` 之类
             if (c == '\\' && i + 1 < s.Length)
             {
+                if (buf.Length == 0) bufStart = i + 1;   // 转义吃掉的反斜杠不算位置
                 buf.Append(s[i + 1]);
                 i += 2;
                 continue;
@@ -220,7 +277,12 @@ public static class MdParser
                 if (end > i + 1)
                 {
                     FlushText();
-                    list.Add(new MdInline { Kind = MdInlineKind.Code, Text = s.Substring(i + 1, end - i - 1) });
+                    list.Add(new MdInline
+                    {
+                        Kind = MdInlineKind.Code,
+                        Text = s.Substring(i + 1, end - i - 1),
+                        SourceOffset = baseOffset + i + 1,
+                    });
                     i = end + 1;
                     continue;
                 }
@@ -240,6 +302,7 @@ public static class MdParser
                         {
                             Kind = MdInlineKind.BoldItalic,
                             Text = s.Substring(i + 3, end - i - 3),
+                            SourceOffset = baseOffset + i + 3,
                         });
                         i = end + 3;
                         continue;
@@ -261,6 +324,7 @@ public static class MdParser
                         {
                             Kind = MdInlineKind.Bold,
                             Text = s.Substring(i + 2, end - i - 2),
+                            SourceOffset = baseOffset + i + 2,
                         });
                         i = end + 2;
                         continue;
@@ -281,6 +345,7 @@ public static class MdParser
                         {
                             Kind = MdInlineKind.Italic,
                             Text = s.Substring(i + 1, end - i - 1),
+                            SourceOffset = baseOffset + i + 1,
                         });
                         i = end + 1;
                         continue;
@@ -299,6 +364,7 @@ public static class MdParser
                     {
                         Kind = MdInlineKind.Strike,
                         Text = s.Substring(i + 2, end - i - 2),
+                        SourceOffset = baseOffset + i + 2,
                     });
                     i = end + 2;
                     continue;
@@ -320,6 +386,7 @@ public static class MdParser
                             Kind = MdInlineKind.Link,
                             Text = s.Substring(i + 1, close - i - 1),
                             Url = s.Substring(close + 2, paren - close - 2),
+                            SourceOffset = baseOffset + i + 1,
                         });
                         i = paren + 1;
                         continue;
@@ -327,6 +394,7 @@ public static class MdParser
                 }
             }
 
+            if (buf.Length == 0) bufStart = i;
             buf.Append(c);
             i++;
         }

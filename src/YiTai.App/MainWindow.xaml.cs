@@ -46,6 +46,8 @@ public partial class MainWindow : Window
 
         InitPanes();   // 先摆一排空栏；打开上次项目时再按项目记忆替换
 
+        InitMarker();  // Ctrl+Shift+↑/↓ 挪"译到哪了"的绿线
+
         Width = _settings.WindowWidth;
         Height = _settings.WindowHeight;
         if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
@@ -134,6 +136,8 @@ public partial class MainWindow : Window
 
         _store = ProjectStore.Open(rootOrProjectFile);
         _settings.LastProjectRoot = _store.Root;
+
+        LoadProgress();   // 这个项目"译到哪了"，按源文件记着
 
         Title = $"译台 — {_store.Meta.Name}";
         TxtProject.Text = _store.Meta.Name;
@@ -551,6 +555,7 @@ public partial class MainWindow : Window
         _store = null;
         _current = null;
         _doc = null;
+        _progress = new ProgressState();   // 没项目就没有进度可言
 
         Title = "译台";
         TxtProject.Text = "还没有打开项目";

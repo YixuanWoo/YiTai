@@ -47,6 +47,13 @@ public sealed class MdInline
     /// <summary>只有 Link 用得上。</summary>
     public string Url { get; set; } = "";
 
+    /// <summary>
+    /// 这一截文字在原文里的起始偏移（绝对，不是段内相对）。
+    /// 有了它，"译到哪了"的绿线才能落在某一段话的中间 —— 记号（** ` &gt;）被吃掉后，
+    /// 渲染出来的字与原文的位置对不上，只能靠解析时就记下来。
+    /// </summary>
+    public int SourceOffset { get; set; }
+
     public static MdInline Plain(string text) => new MdInline { Kind = MdInlineKind.Text, Text = text };
 }
 
@@ -58,6 +65,22 @@ public sealed class MdItem
 
     /// <summary>缩进级别，0 起；用来给嵌套列表做左缩进，不真的做嵌套。</summary>
     public int Level { get; set; }
+
+    public List<MdInline> Inlines { get; } = new();
+}
+
+/// <summary>
+/// 段落里的一行原文。
+/// 只给解析器内部用：把一段的多行拼回去（Markdown 的软换行语义），
+/// 拼的时候每一截文字都带着自己的绝对偏移，"译到哪了"的竖线才落得准。
+/// </summary>
+public sealed class MdLine
+{
+    /// <summary>这一行在原文里的字符偏移。</summary>
+    public int SourceOffset { get; set; }
+
+    /// <summary>这一行结束的位置（不含换行符）。</summary>
+    public int EndOffset { get; set; }
 
     public List<MdInline> Inlines { get; } = new();
 }
@@ -75,6 +98,13 @@ public sealed class MdBlock
 
     /// <summary>代码块原文（保留换行与缩进）。</summary>
     public string Text { get; set; } = "";
+
+    /// <summary>
+    /// 这一块在原文里的字符偏移（换行统一成 \n 之后的位置，0 起）。
+    /// 只有一个用途：把"译到哪了"的绿色标记钉在原文上 ——
+    /// 记"第几段"会在原文增删一段之后整体错位，记字符偏移则不会。
+    /// </summary>
+    public int SourceOffset { get; set; }
 
     /// <summary>段落 / 标题 / 引用 / 列表项里的行内内容。</summary>
     public List<MdInline> Inlines { get; } = new();

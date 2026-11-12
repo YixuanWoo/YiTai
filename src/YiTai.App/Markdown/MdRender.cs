@@ -16,6 +16,7 @@
 // 换一个 FontSize 重画一遍，整篇就跟着变大、自动重新折行。
 // ============================================================
 
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Documents;
@@ -49,6 +50,23 @@ public sealed class MdStyle
 
 public static class MdRender
 {
+    /// <summary>进度线的颜色与粗细：一条 3px 的绿线，压在被切断的那一行上沿。</summary>
+    public static readonly Brush MarkerLine = CreateMarkerLine();
+
+    private const double MarkerThickness = 3;
+
+    private static Brush CreateMarkerLine()
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(0x3F, 0xB5, 0x66));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>
+    /// 渲染一整篇。
+    /// 进度标记不在这里画：它是一根浮在文字上的竖线（见 MainWindow.Marker.cs），
+    /// 不插进文档、不切段、不改行距 —— 所以屏幕上的排版永远等于"没有标记"时的排版。
+    /// </summary>
     public static FlowDocument Build(MdDoc md, MdStyle st)
     {
         var doc = NewDoc(st);
@@ -80,9 +98,13 @@ public static class MdRender
 
         string t = text.Replace("\r\n", "\n").Replace('\r', '\n');
         bool any = false;
+        int offset = 0;
 
         foreach (string raw in t.Split('\n'))
         {
+            int lineStart = offset;
+            offset += raw.Length + 1;
+
             string s = raw.Trim();
             if (s.Length == 0) continue;
 
@@ -92,7 +114,9 @@ public static class MdRender
                 Margin = new Thickness(0, 0, 0, st.FontSize * 0.5),
                 LineHeight = st.FontSize * st.LineSpacing,
             };
-            p.Inlines.Add(new Run(s));
+            p.Tag = lineStart;      // 给进度标记留个锚
+
+            p.Inlines.Add(new Run(s) { Tag = lineStart });
             doc.Blocks.Add(p);
         }
 
@@ -128,32 +152,133 @@ public static class MdRender
 
     private static void AppendBlock(FlowDocument doc, MdBlock block, MdStyle st)
     {
+        Block b;
+
         switch (block.Kind)
         {
             case MdBlockKind.Heading:
-                doc.Blocks.Add(Heading(block, st));
+                b = Heading(block, st);
                 break;
 
             case MdBlockKind.CodeBlock:
-                doc.Blocks.Add(CodeBlock(block, st));
+                b = CodeBlock(block, st);
                 break;
 
             case MdBlockKind.Quote:
-                doc.Blocks.Add(Quote(block, st));
+                b = Quote(block, st);
                 break;
 
             case MdBlockKind.List:
-                doc.Blocks.Add(ListBlock(block, st));
+                b = ListBlock(block, st);
                 break;
 
             case MdBlockKind.Divider:
-                doc.Blocks.Add(Divider(st));
+                b = Divider(st);
                 break;
 
             default:
-                doc.Blocks.Add(ParagraphBlock(block, st));
+                b = ParagraphBlock(block, st);
                 break;
         }
+
+        // 每个块都记住"我在原文的哪个字符位置"——进度竖线靠它落地
+        b.Tag = block.SourceOffset;
+
+        doc.Blocks.Add(b);
+    }
+
+    // ---------------------------------------------------------------- 位置反查
+    //
+    // 进度竖线要立在某句话前面，先得知道那句话在文档里的哪里。
+    // 渲染时每一截文字都把"我在原文第几个字"记在 Tag 上，这里顺着它找回去。
+
+    /// <summary>
+    /// 原文偏移 → 文档里的位置（落点给前一截的末尾，越界给 null）。
+    /// </summary>
+    public static TextPointer? PointerAtOffset(FlowDocument doc, int offset)
+    {
+        TextPointer? tail = null;
+
+        foreach (Run run in AllRuns(doc))
+        {
+            if (run.Tag is not int start) continue;
+
+            int len = run.Text.Length;
+            int end = start + len;
+
+            if (offset >= start && offset < end)
+                return run.ContentStart.GetPositionAtOffset(offset - start, LogicalDirection.Forward);
+
+            if (offset == end)
+                tail = run.ContentStart.GetPositionAtOffset(len, LogicalDirection.Forward);
+        }
+
+        return tail;
+    }
+
+    /// <summary>文档里所有文字截（含粗体/斜体/链接里那些）。</summary>
+    private static IEnumerable<Run> AllRuns(FlowDocument doc)
+    {
+        foreach (Block b in doc.Blocks)
+        {
+            if (b is Paragraph p)
+            {
+                foreach (Run r in RunsIn(p.Inlines)) yield return r;
+            }
+            else if (b is List l)
+            {
+                foreach (ListItem li in l.ListItems)
+                {
+                    foreach (Block ib in li.Blocks)
+                    {
+                        if (ib is Paragraph lp)
+                            foreach (Run r in RunsIn(lp.Inlines)) yield return r;
+                    }
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<Run> RunsIn(InlineCollection inlines)
+    {
+        foreach (Inline inl in inlines)
+        {
+            if (inl is Run run) yield return run;
+            else if (inl is Span span)
+            {
+                foreach (Run r in RunsIn(span.Inlines)) yield return r;
+            }
+        }
+    }
+
+
+    /// <summary>
+    /// 按原文偏移找该划进度线的块：取"起始偏移不大于 offset 的最后一个块"。
+    /// offset 落在第一块之前时给第一块；空文档给 null。
+    /// </summary>
+    public static Block? FindBlockByOffset(FlowDocument doc, int offset, out int index)
+    {
+        index = -1;
+        Block? hit = null;
+        int i = 0;
+
+        foreach (Block b in doc.Blocks)
+        {
+            if (b.Tag is not int at) { i++; continue; }
+            if (at <= offset)
+            {
+                hit = b;
+                index = i;
+            }
+            else
+            {
+                if (hit == null) { hit = b; index = i; }   // 标记在第一块之前
+                break;
+            }
+            i++;
+        }
+
+        return hit;
     }
 
     private static Paragraph ParagraphBlock(MdBlock block, MdStyle st)
@@ -259,6 +384,17 @@ public static class MdRender
 
     // ==================================================================== 行内
 
+    /// <summary>
+    /// 造一节文字，并把它的原文起点记在 Tag 上。
+    /// 点到哪个字，就能顺着这个 Tag 反推出"原文第几个字符"——进度线要这么定位。
+    /// </summary>
+    private static Run MakeRun(MdInline inl)
+    {
+        var run = new Run(inl.Text);
+        run.Tag = inl.SourceOffset;
+        return run;
+    }
+
     private static void AppendInlines(Paragraph p, List<MdInline> inlines, MdStyle st)
     {
         foreach (var inl in inlines)
@@ -268,7 +404,7 @@ public static class MdRender
                 case MdInlineKind.Bold:
                 {
                     var b = new Bold();
-                    b.Inlines.Add(new Run(inl.Text));
+                    b.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(b);
                     break;
                 }
@@ -276,7 +412,7 @@ public static class MdRender
                 case MdInlineKind.Italic:
                 {
                     var it = new Italic();
-                    it.Inlines.Add(new Run(inl.Text));
+                    it.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(it);
                     break;
                 }
@@ -285,7 +421,7 @@ public static class MdRender
                 {
                     var b = new Bold();
                     var it = new Italic();
-                    it.Inlines.Add(new Run(inl.Text));
+                    it.Inlines.Add(MakeRun(inl));
                     b.Inlines.Add(it);
                     p.Inlines.Add(b);
                     break;
@@ -299,7 +435,7 @@ public static class MdRender
                         Background = st.CodeBg,
                         Foreground = st.CodeFg,
                     };
-                    span.Inlines.Add(new Run(inl.Text));
+                    span.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(span);
                     break;
                 }
@@ -311,7 +447,7 @@ public static class MdRender
                         Foreground = st.Dim,
                         TextDecorations = TextDecorations.Strikethrough,
                     };
-                    span.Inlines.Add(new Run(inl.Text));
+                    span.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(span);
                     break;
                 }
@@ -319,13 +455,13 @@ public static class MdRender
                 case MdInlineKind.Link:
                 {
                     var link = new Hyperlink { Foreground = st.Accent };
-                    link.Inlines.Add(new Run(inl.Text));
+                    link.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(link);
                     break;
                 }
 
                 default:
-                    p.Inlines.Add(new Run(inl.Text));
+                    p.Inlines.Add(MakeRun(inl));
                     break;
             }
         }

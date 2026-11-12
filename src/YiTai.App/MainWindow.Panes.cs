@@ -56,10 +56,24 @@ public partial class MainWindow
         public RefDocSpec Spec = new();
         public Border Root = null!;
 
-        /// <summary>只读的渲染区。Markdown 在这里画成带格式的文档，选中复制归框架管。</summary>
-        public FlowDocumentScrollViewer Body = null!;
+        /// <summary>
+        /// 只读的渲染区。Markdown 在这儿画成带格式的文档，选中复制归框架管。
+        /// 用只读 RichTextBox 而不是纯显示控件，是因为只有它能把"鼠标点"换成"文档里的位置"。
+        /// </summary>
+        public RichTextBox Body = null!;
+
+        /// <summary>
+        /// 进度竖线。浮在正文上面的一层，不属于文档：
+        /// 插进文档会改排版（切开段落、行距变动），而"译到哪了"不该动正文一个字的排布。
+        /// </summary>
+        public System.Windows.Shapes.Rectangle? Line;
+
+        public Canvas? LineLayer;
 
         public TextBlock Caption = null!;
+
+        /// <summary>底栏原本该写的字（字数/段数）；进度那句话是接在它后面的。</summary>
+        public string BaseCaption = "";
 
         /// <summary>底部那枚显示百分比的按钮，点一下回 100%。</summary>
         public Button ZoomLabel = null!;
@@ -342,19 +356,63 @@ public partial class MainWindow
         dock.Children.Add(footBar);
 
         // ---------------------------------------------------------- 正文：渲染后的 Markdown
-        // 用 FlowDocumentScrollViewer 而不是 TextBox：
-        //   · 加粗/斜体/标题/列表/代码块都画得出来；
-        //   · 它按"给多宽就按多宽折行"排版，所以放大字号只会变高、不会溢出栏宽。
-        var body = new FlowDocumentScrollViewer
+        // 用只读的 RichTextBox 而不是纯显示控件：
+        //   · 加粗/斜体/标题/列表/代码块都画得出来（它装的就是一份 FlowDocument）；
+        //   · 它按"给多宽就按多宽折行"排版，放大字号只会变高、不会溢出栏宽；
+        //   · 只有它给得出"鼠标点在哪个字上"（GetPositionFromPoint）——
+        //     "译到哪了"的竖线要立在某句话前面，靠的就是这个。
+        var body = new RichTextBox
         {
-            IsToolBarVisible = false,
-            IsSelectionEnabled = true,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Background = Brushes.Transparent,
+            IsReadOnly = true,
+            IsDocumentEnabled = false,        // 别让文里的链接把点击吃掉
+            IsUndoEnabled = false,
+            AcceptsReturn = false,
+            AcceptsTab = false,
+            AllowDrop = false,
+            CaretBrush = Brushes.Transparent, // 只读栏不该有闪烁的光标
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            IsTabStop = false,
         };
+        body.ContextMenu = null;              // 右键留给进度标记用
+
+        // ---------------------------------------------------------- 进度竖线：浮在上面的单独一层
+        // 不是文档的一部分：不插字、不切段、不改行距，
+        // 所以画上它和没画它，正文排版一模一样。
+        var line = new System.Windows.Shapes.Rectangle
+        {
+            Width = MarkerWidth,
+            Fill = MdRender.MarkerLine,
+            RadiusX = MarkerWidth / 2,        // 两端收成圆弧，像一根短光棒
+            RadiusY = MarkerWidth / 2,
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = MarkerColor,
+                BlurRadius = 7,
+                ShadowDepth = 0,
+                Opacity = 0.55,
+            },
+        };
+
+        var overlay = new Canvas
+        {
+            IsHitTestVisible = false,          // 别抢鼠标：点、选、拖还得落在正文上
+            ClipToBounds = true,
+        };
+        overlay.Children.Add(line);
+
+        var host = new Grid();
+        host.Children.Add(body);
+        host.Children.Add(overlay);
+
+        pane.Body = body;
+        pane.Line = line;
+        pane.LineLayer = overlay;
 
         // 鼠标停在这一栏上按 Ctrl+滚轮，就是缩放这一栏
         body.PreviewMouseWheel += (_, e) =>
@@ -364,8 +422,8 @@ public partial class MainWindow
             e.Handled = true;
         };
 
-        pane.Body = body;
-        dock.Children.Add(body);
+        AttachMarkerEvents(pane, body);   // 点一下=标进度，右键=菜单
+        dock.Children.Add(host);
 
         border.Child = dock;
         return border;
@@ -553,6 +611,9 @@ public partial class MainWindow
         string text = ResolvePaneContent(pane.Spec, out string note, out bool exists, out bool isMarkdown);
         var style = MakeStyle(zoom);
 
+        // "译到哪了"的绿线：只画在"跟随当前章"那一栏，且这一栏得是真有内容
+        int marker = exists && pane.Spec.Kind == RefKind.FollowSource ? CurrentOffset() : -1;
+
         try
         {
             if (!exists)
@@ -568,7 +629,13 @@ public partial class MainWindow
             pane.Body.Document = MdRender.Message(text, style);
         }
 
-        if (pane.Caption != null) pane.Caption.Text = note;
+        if (pane.Caption != null)
+        {
+            pane.BaseCaption = note;
+            pane.Caption.Text = WithProgress(note, marker, text);
+        }
+
+        UpdateMarkerVisual(pane);   // 竖线单独一层，改文档不用重画
     }
 
     /// <summary>一栏该显示什么。exists=false 表示这段字是提示语，不是文件内容。</summary>

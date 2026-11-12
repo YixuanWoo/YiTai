@@ -31,12 +31,20 @@ public static class ProjectLayout
     public const string TranslationsDirName = "translations";
     public const string BackupsDirName = "backups";
     public const string PrivateDirName = ".yitai";
+    public const string ProgressFileName = "progress.json";
 
     public static string ProjectFile(string root) => Path.Combine(root, ProjectFileName);
     public static string Sources(string root) => Path.Combine(root, SourcesDirName);
     public static string Translations(string root) => Path.Combine(root, TranslationsDirName);
     public static string Backups(string root) => Path.Combine(root, BackupsDirName);
     public static string Private(string root) => Path.Combine(root, PrivateDirName);
+
+    /// <summary>
+    /// "译到哪了"的进度标记，按源文件名记着。
+    /// 放 .yitai 而不进 project.json：它是干活的临时状态，不是"这本书怎么翻"的清单，
+    /// 不该让清单的 schema 隔三差五地变。
+    /// </summary>
+    public static string ProgressFile(string root) => Path.Combine(Private(root), ProgressFileName);
 
     /// <summary>建好一个新项目所需的空目录（不覆盖已存在的内容）。</summary>
     public static void EnsureCreated(string root)
