@@ -130,12 +130,14 @@
 需要 .NET SDK 10（桌面开发工作负载）。
 
 ```
-git clone https://github.com/<you>/YiTai.git
+git clone https://github.com/YixuanWoo/YiTai.git
 cd YiTai
 .\build.ps1              # 调试版 → src\YiTai.App\bin\Debug\net10.0-windows\YiTai.exe
 .\build.ps1 -Release     # 单文件免安装 → dist\YiTai.exe（约 60MB，自包含运行时）
 dotnet run --project tests\YiTai.Tests   # 冒烟测试，退出码 0 = 全过
 ```
+
+不想装 SDK 的话，直接去 [Releases](https://github.com/YixuanWoo/YiTai/releases) 下 `YiTai.exe` 单文件，双击就跑。
 
 设置文件在 `%APPDATA%\YiTai\settings.json`（上次的项目、窗口尺寸、自动保存间隔）。
 栏位摆法与每栏放的文件、显示比例跟着项目走，记在项目内的 `.yitai\panes.json`。

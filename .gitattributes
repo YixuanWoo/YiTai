@@ -1,0 +1,17 @@
+# 换行统一：仓库里一律 LF，避免 Windows 上每次提交都报
+# "LF will be replaced by CRLF" 警告、也避免别人 clone 后整库 diff。
+* text=auto eol=lf
+
+# Windows 脚本必须 CRLF，否则某些环境下的 .bat/.ps1 会读不了
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不做换行转换，也不做 diff
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.zip binary
