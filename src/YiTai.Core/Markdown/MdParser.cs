@@ -353,6 +353,26 @@ public static class MdParser
                 }
             }
 
+            // 高亮 ==xxx==（GFM / Obsidian / Typora / Pandoc 都认，事实标准）
+            // 放在粗体之前判：'=' 和 '* _ ~' 不冲突，但顺序上先认更长的记号更稳
+            if (c == '=' && i + 1 < s.Length && s[i + 1] == '=')
+            {
+                int end = s.IndexOf("==", i + 2, StringComparison.Ordinal);
+                if (end > i + 2)
+                {
+                    FlushText();
+                    list.Add(new MdInline
+                    {
+                        Kind = MdInlineKind.Highlight,
+                        Text = s.Substring(i + 2, end - i - 2),
+                        SourceOffset = baseOffset + i + 2,
+                    });
+                    i = end + 2;
+                    continue;
+                }
+                // 没闭合：当普通文字收着，绝不把 == 吞掉
+            }
+
             // 删除线 ~~xxx~~
             if (c == '~' && i + 1 < s.Length && s[i + 1] == '~')
             {

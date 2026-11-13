@@ -32,6 +32,7 @@ public static class ProjectLayout
     public const string BackupsDirName = "backups";
     public const string PrivateDirName = ".yitai";
     public const string ProgressFileName = "progress.json";
+    public const string PaneLayoutFileName = "panes.json";
 
     public static string ProjectFile(string root) => Path.Combine(root, ProjectFileName);
     public static string Sources(string root) => Path.Combine(root, SourcesDirName);
@@ -45,6 +46,13 @@ public static class ProjectLayout
     /// 不该让清单的 schema 隔三差五地变。
     /// </summary>
     public static string ProgressFile(string root) => Path.Combine(Private(root), ProgressFileName);
+
+    /// <summary>
+    /// 对照栏的摆法（几栏、各放哪份文件、各栏比例）。
+    /// 跟进度一样放 .yitai：它是"这本书我怎么对照着看"，不是书本身的属性。
+    /// 放项目里而不是全局设置，是为了把整个文件夹拷走、换台机器也还是那几栏。
+    /// </summary>
+    public static string PaneLayoutFile(string root) => Path.Combine(Private(root), PaneLayoutFileName);
 
     /// <summary>建好一个新项目所需的空目录（不覆盖已存在的内容）。</summary>
     public static void EnsureCreated(string root)

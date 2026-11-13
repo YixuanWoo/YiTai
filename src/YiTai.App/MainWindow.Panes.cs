@@ -16,8 +16,10 @@
 // 缩放（70%~250%）只改这一栏的字号基准，然后用 FlowDocument 按当前栏宽重画：
 // 放大是"字变大、行重新折"，不是把内容拉宽挤出栏外。
 //
-// 为什么布局不进 project.json：那是"这本书怎么翻"；栏怎么摆是
-// "这个软件上次什么样"，跟 AppSettings 一起放在 %APPDATA%\YiTai。
+// 为什么布局不进 project.json、而放 .yitai\panes.json：
+//   project.json 是"这本书怎么翻"的清单，schema 要稳；
+//   栏怎么摆是"我上次怎么对照着看"，跟着项目走（整个文件夹拷走、换台机器也还是那几栏），
+//   但不该混进清单。全局设置里只留一份兼容用的旧记录。
 // ============================================================
 
 using System;
@@ -123,37 +125,134 @@ public partial class MainWindow
         RebuildPanes();
     }
 
-    /// <summary>换项目时调用：恢复这个项目上次的栏位，没有就给一栏空的。</summary>
+    /// <summary>换项目时调用：恢复这个项目上次的栏位，没有就按项目现状摆出来。</summary>
     private void LoadPanesForProject()
     {
         _panes.Clear();
         _weights.Clear();
 
-        string key = PaneSettingsKey();
-        List<RefDocSpec>? saved = null;
-        if (key.Length > 0 && _settings.PanesByProject.TryGetValue(key, out var list) && list != null)
-            saved = list;
+        string root = _store?.Root ?? "";
 
-        if (saved != null && saved.Count > 0)
+        // ① 项目自己记的（.yitai\panes.json）—— 首选，跟着项目走
+        var layout = PaneLayoutStore.Load(root);
+
+        if (layout.Panes.Count > 0)
         {
-            foreach (var s in saved)
+            foreach (var s in layout.Panes)
             {
                 if (_panes.Count >= MaxRefPanes) break;
                 if (s == null) continue;
                 _panes.Add(NewPane(NormalizeSpec(s)));
             }
+
+            foreach (double d in layout.Weights) _weights.Add(d);
         }
+        else
+        {
+            // ② 老版本只存在全局设置里：兼容读一次，下次保存就会落到项目里
+            string key = PaneSettingsKey();
+            List<RefDocSpec>? saved = null;
+            if (key.Length > 0 && _settings.PanesByProject.TryGetValue(key, out var list) && list != null)
+                saved = list;
+
+            if (saved != null && saved.Count > 0)
+            {
+                foreach (var s in saved)
+                {
+                    if (_panes.Count >= MaxRefPanes) break;
+                    if (s == null) continue;
+                    _panes.Add(NewPane(NormalizeSpec(s)));
+                }
+            }
+
+            if (key.Length > 0 && _settings.PaneWeightsByProject.TryGetValue(key, out var w) && w != null)
+            {
+                _weights.Clear();
+                foreach (double d in w) _weights.Add(d);
+            }
+        }
+
+        // ③ 都没有：按"上次译到哪儿"自己摆出来，而不是甩一排空栏给人重新挑
+        if (_panes.Count == 0)
+            FillPanesFromProject();
 
         if (_panes.Count == 0)
             _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
 
-        if (key.Length > 0 && _settings.PaneWeightsByProject.TryGetValue(key, out var w) && w != null)
+        RebuildPanes();
+
+        // 打开项目第一眼就该看见"上次停在哪"，不用再自己翻
+        ScrollPanesToMarkerSoon();
+    }
+
+    /// <summary>
+    /// 没有任何栏位记忆时，按项目现状把栏摆出来：
+    /// 先在进度里记过的那几份（那正是"我正在译的"），再按章序补到上限。
+    /// PDF 不自动摆：一栏 WebView2 启动慢，要用时自己加。
+    /// </summary>
+    private void FillPanesFromProject()
+    {
+        if (_store == null) return;
+
+        var picked = new List<string>();
+
+        // ① 进度里记过 offset 的文件
+        foreach (string name in _progress.Files.Keys)
         {
-            _weights.Clear();
-            foreach (double d in w) _weights.Add(d);
+            string abs = Path.Combine(ProjectLayout.Sources(_store.Root), name);
+            if (File.Exists(abs) && !picked.Contains(abs)) picked.Add(abs);
         }
 
-        RebuildPanes();
+        // ② sources 里其余的文本文件，按文件名（也就是章序）补
+        var rest = new List<string>();
+        foreach (var s in _store.Meta.Sources)
+        {
+            string abs = Path.Combine(ProjectLayout.Sources(_store.Root), s.FileName);
+            if (!File.Exists(abs)) continue;
+            if (IsPdfPath(abs)) continue;
+            if (picked.Contains(abs)) continue;
+            rest.Add(abs);
+        }
+
+        rest.Sort(StringComparer.OrdinalIgnoreCase);
+        foreach (string abs in rest) picked.Add(abs);
+
+        // 只摆"正在译的"：进度里记着的那几份；不够两栏再按章序补。
+        // 一上来摆满四栏反而挤，也未必是你此刻要看的东西。
+        int want = Math.Min(MaxRefPanes, 2);
+
+        foreach (string abs in picked)
+        {
+            if (_panes.Count >= want) break;
+            _panes.Add(NewPane(new RefDocSpec
+            {
+                Kind = RefKind.External,
+                Path = Path.GetFullPath(abs),
+                Label = Path.GetFileName(abs),
+                Zoom = 1.0,
+            }));
+        }
+    }
+
+    /// <summary>
+    /// 打开项目后，把各栏滚到进度线那儿。
+    /// 排到 ContextIdle：等文档排完版、字有了位置，再滚才滚得准。
+    /// </summary>
+    private void ScrollPanesToMarkerSoon()
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            foreach (var p in _panes)
+            {
+                if (!p.Markable) continue;
+
+                UpdateMarkerVisual(p);
+                if (CurrentOffset(p) >= 0) p.Line?.BringIntoView();
+            }
+
+            // 布局已完成，这时记宽度才是真的宽度；顺手把这次摆法落到项目里
+            SavePaneLayout();
+        }), System.Windows.Threading.DispatcherPriority.ContextIdle);
     }
 
     /// <summary>
@@ -186,18 +285,47 @@ public partial class MainWindow
         return spec;
     }
 
-    /// <summary>把当前栏位写进设置（只进内存，落盘由窗口关闭时统一做）。</summary>
+    /// <summary>
+    /// 把当前栏位记下来：一份进项目（.yitai\panes.json，主），一份进全局设置（兼容旧版）。
+    /// 项目那份当场落盘，全局那份只进内存（窗口关闭时统一存）。
+    /// </summary>
     private void SavePaneLayout()
     {
         string key = PaneSettingsKey();
-        if (key.Length == 0) return;
+        if (key.Length == 0 || _store == null) return;
 
+        CaptureWidths();
+
+        // ① 项目内（主）：路径尽量存相对项目根，整个文件夹搬走也还在
+        var layout = new PaneLayout();
+        foreach (var p in _panes)
+        {
+            var spec = CloneSpec(p.Spec);
+            spec.Path = PathForStore(spec.Path);
+            layout.Panes.Add(spec);
+        }
+        layout.Weights = new List<double>(_weights);
+
+        try { PaneLayoutStore.Save(_store.Root, layout); }
+        catch (Exception) { /* 记不住也不能打断干活 */ }
+
+        // ② 全局（兼容）：项目文件夹没权限写时，至少还有一份
         var list = new List<RefDocSpec>();
         foreach (var p in _panes) list.Add(CloneSpec(p.Spec));
         _settings.PanesByProject[key] = list;
-
-        CaptureWidths();
         _settings.PaneWeightsByProject[key] = new List<double>(_weights);
+    }
+
+    /// <summary>项目内的文件存相对项目根的路径；项目外的保持绝对。</summary>
+    private string PathForStore(string path)
+    {
+        if (path.Length == 0 || _store == null) return path;
+
+        string root = _store.Root;
+        if (path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return ProjectLayout.ToRelative(root, path);
+
+        return path;
     }
 
     private string PaneSettingsKey()

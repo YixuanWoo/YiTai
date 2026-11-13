@@ -155,6 +155,11 @@ public partial class MainWindow
     {
         if (!pane.Markable) return;   // 提示语、读不出的文件、空文件：都没有进度可言
 
+        // 拖滚动条、点滚动条的上下箭头，本质是"翻页"，不是"点正文"。
+        // 滚动条是正文控件模板里的子孙，抬起事件照样会以隧道方式经过这里，
+        // 以前就被当成一次落线 —— 拖一下滚动条，线就跳到别处。
+        if (IsFromScrollBar(e.OriginalSource)) return;
+
         Point at = e.GetPosition(pane.Body);
 
         // 这一下是不是双击的第二下？两条判据：
@@ -186,6 +191,34 @@ public partial class MainWindow
         if (offset == CurrentOffset(pane)) return;             // 点在原处，什么都不用做
 
         PlaceMarkNow(pane, offset);
+    }
+
+    /// <summary>
+    /// 这一下是不是落在滚动条上（拖滑块、点箭头、按轨道）。
+    /// RichTextBox 的滚动条在它的模板里，属于正文的子孙；
+    /// 在滚动条上抬起鼠标，隧道事件仍会先经过正文控件。
+    /// 从命中的元素往上找，碰到 ScrollBar 就算滚动条，碰到 ScrollViewer 还没碰到就算正文。
+    /// 这是"黑名单"判据：往后正文里若添了别的可点附件（侧栏、行号、悬浮按钮），
+    /// 这里每加一个都要补一条；要更精确的控制就改"正文安全区"方案，取舍见 README「已知边界」。
+    /// </summary>
+    private static bool IsFromScrollBar(object? source)
+    {
+        DependencyObject? d = source as DependencyObject;
+
+        while (d != null)
+        {
+            if (d is System.Windows.Controls.Primitives.ScrollBar) return true;
+            if (d is ScrollViewer) return false;
+
+            if (d is FrameworkContentElement content)
+                d = content.Parent;
+            else if (d is Visual || d is System.Windows.Media.Media3D.Visual3D)
+                d = VisualTreeHelper.GetParent(d);
+            else
+                d = LogicalTreeHelper.GetParent(d);
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -239,6 +272,7 @@ public partial class MainWindow
     private void OnPaneMouseRightUp(PaneView pane, MouseButtonEventArgs e)
     {
         if (!pane.Markable) return;
+        if (IsFromScrollBar(e.OriginalSource)) return;   // 在滚动条上右键，不弹进度菜单
 
         ForgetUndo();   // 右键要弹菜单了：账本清掉，免得下一记双击把右键之前那条线撤走
 

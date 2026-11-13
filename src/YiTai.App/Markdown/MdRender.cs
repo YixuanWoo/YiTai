@@ -38,6 +38,21 @@ public sealed class MdStyle
     public Brush CodeFg = Brushes.DimGray;
     public Brush QuoteLine = Brushes.LightGray;
 
+    /// <summary>
+    /// ==高亮== 的荧光底色：红笔那一支（不是荧光黄）。
+    /// 压到淡红（#FFD6D6），深色正文压在上面才看得清；再深就像一条报错横幅了。
+    /// </summary>
+    public Brush Mark = MarkBrush;
+
+    private static readonly Brush MarkBrush = CreateMarkBrush();
+
+    private static Brush CreateMarkBrush()
+    {
+        var b = new SolidColorBrush(Color.FromRgb(0xFF, 0xD6, 0xD6));
+        b.Freeze();   // 冻结：跨线程/跨栏共用同一支笔，不参与动画
+        return b;
+    }
+
     /// <summary>正文基准字号（已经乘过缩放）。</summary>
     public double FontSize = 14;
 
@@ -447,6 +462,15 @@ public static class MdRender
                         Foreground = st.Dim,
                         TextDecorations = TextDecorations.Strikethrough,
                     };
+                    span.Inlines.Add(MakeRun(inl));
+                    p.Inlines.Add(span);
+                    break;
+                }
+
+                case MdInlineKind.Highlight:
+                {
+                    // 只给底色，不动字重字号 —— 高亮是"标出来"，不是"喊出来"
+                    var span = new Span { Background = st.Mark };
                     span.Inlines.Add(MakeRun(inl));
                     p.Inlines.Add(span);
                     break;

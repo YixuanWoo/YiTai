@@ -35,6 +35,9 @@ public enum MdInlineKind
     Code = 4,
     Strike = 5,
     Link = 6,
+
+    /// <summary>==高亮==（GFM / Obsidian / Typora / Pandoc 的事实标准，不是 CommonMark 正规语法）。</summary>
+    Highlight = 7,
 }
 
 /// <summary>一段里的一小截：一段文字，或者一段带格式的文字。</summary>

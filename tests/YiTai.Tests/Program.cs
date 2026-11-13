@@ -37,6 +37,11 @@ string NewSandbox()
 // ============================================================ 1. 新建项目
 Console.WriteLine("== 1. 新建项目 ==");
 string box = NewSandbox();
+
+// 测试的"设置读写"必须落在这里，不能碰用户真实的 %APPDATA%\YiTai\settings.json。
+// 之前没隔离，每跑一次测试就把用户上次的项目、栏位记忆、最近文件整份覆盖成测试数据。
+Environment.SetEnvironmentVariable("YITAI_CONFIG_DIR", Path.Combine(box, "config"));
+
 string root = Path.Combine(box, "我的译本");
 var store = ProjectStore.CreateNew(root, "我的译本");
 

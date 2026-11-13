@@ -56,8 +56,25 @@ public sealed class AppSettings
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YiTai", "settings.json");
+    /// <summary>
+    /// 设置文件的位置。默认 %APPDATA%\YiTai\settings.json。
+    /// 环境变量 YITAI_CONFIG_DIR 可以把它指到别处 —— 测试必须这么做：
+    /// 冒烟测试里有一节是"设置读写"，直接落盘会把用户真实的
+    /// 上次项目、栏位记忆、最近文件整份覆盖掉（2026-11-13 已出过一次事故）。
+    /// </summary>
+    public static string DefaultPath
+    {
+        get
+        {
+            string over = Environment.GetEnvironmentVariable("YITAI_CONFIG_DIR") ?? "";
+
+            string dir = over.Trim().Length > 0
+                ? over
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YiTai");
+
+            return Path.Combine(dir, "settings.json");
+        }
+    }
 
     public static AppSettings Load()
     {
