@@ -131,17 +131,32 @@
 
                     <!-- 编辑区和预览叠在同一格里：只切可见性，文本一直留在 TextBox 里，切来切去不会丢 -->
                     <Grid>
-                        <TextBox x:Name="TbxTranslation" Style="{StaticResource DocBox}"
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 行号栏：像代码编辑器一样，钉在译文左侧，只读、不抢焦点 -->
+                        <Border x:Name="LineNumPanel" Grid.Column="0"
+                                Background="{DynamicResource BgCardAlt}"
+                                BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
+                            <TextBox x:Name="LineNumGutter" Style="{StaticResource LineNumBox}"
+                                     VerticalAlignment="Stretch"/>
+                        </Border>
+
+                        <TextBox x:Name="TbxTranslation" Grid.Column="1" Style="{StaticResource DocBox}"
                                  IsEnabled="False" TextChanged="OnTranslationChanged"
                                  SelectionChanged="OnTranslationSelectionChanged"/>
-                        <FlowDocumentScrollViewer x:Name="PreviewDoc" Visibility="Collapsed"
+                        <FlowDocumentScrollViewer x:Name="PreviewDoc" Grid.Column="0" Grid.ColumnSpan="2"
+                                                  Visibility="Collapsed"
                                                   IsToolBarVisible="False" IsSelectionEnabled="True"
                                                   Background="{DynamicResource BgCard}"
                                                   VerticalScrollBarVisibility="Auto"
                                                   HorizontalScrollBarVisibility="Disabled"/>
 
                         <!-- 一篇译文都没有时：这里就不是一块死灰，直接给个能按的按钮 -->
-                        <StackPanel x:Name="EmptyTrans" Visibility="Collapsed"
+                        <StackPanel x:Name="EmptyTrans" Grid.Column="0" Grid.ColumnSpan="2"
+                                    Visibility="Collapsed"
                                     VerticalAlignment="Center" HorizontalAlignment="Center"
                                     Margin="24" MaxWidth="340">
                             <TextBlock x:Name="TxtEmptyTitle" Text="这个项目还没有译文"

@@ -49,6 +49,8 @@ public partial class MainWindow : Window
 
         InitMarker();  // Ctrl+Shift+↑/↓ 挪"译到哪了"的绿线
 
+        InitLineNumbers();  // 译文栏左侧的行号
+
         Width = _settings.WindowWidth;
         Height = _settings.WindowHeight;
         if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
@@ -364,6 +366,7 @@ public partial class MainWindow : Window
         _autoSave.Stop();
 
         TbxTranslation.IsEnabled = true;
+        LineNumPanel.Visibility = Visibility.Visible;
         EmptyTrans.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = RelativeForDisplay(trPath);
         RefreshPanes();   // 缩放之类的栏内状态刷一下（栏里放什么是不跟着译文变的）
@@ -388,6 +391,7 @@ public partial class MainWindow : Window
         _autoSave.Stop();
 
         TbxTranslation.IsEnabled = false;
+        LineNumPanel.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = "";
         TxtEmptyTitle.Text = title;
         TxtEmptyHint.Text = hint;
@@ -563,12 +567,14 @@ public partial class MainWindow : Window
             RefreshPreview();
             BtnPreview.Content = "回到编辑";
             TbxTranslation.Visibility = Visibility.Collapsed;
+            LineNumPanel.Visibility = Visibility.Collapsed;
             PreviewDoc.Visibility = Visibility.Visible;
             return;
         }
 
         PreviewDoc.Visibility = Visibility.Collapsed;
         TbxTranslation.Visibility = Visibility.Visible;
+        LineNumPanel.Visibility = Visibility.Visible;
         BtnPreview.Content = "预览";
     }
 

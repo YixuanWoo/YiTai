@@ -251,6 +251,27 @@
         <Setter Property="Padding" Value="18,8,14,18"/>
     </Style>
 
+    <!-- ========================================================== 行号栏 -->
+    <!-- 和 DocBox 必须同字体、同字号、同行高、同上下内边距，滚动时才能逐行对齐；
+         它自己不换行、不滚动条、不抢焦点，只是一个会跟着译文滚的数字条。 -->
+    <Style x:Key="LineNumBox" TargetType="TextBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextFaint}"/>
+        <Setter Property="FontFamily" Value="Microsoft YaHei"/>
+        <Setter Property="FontSize" Value="15"/>
+        <Setter Property="TextBlock.LineHeight" Value="29"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="TextWrapping" Value="NoWrap"/>
+        <Setter Property="VerticalScrollBarVisibility" Value="Hidden"/>
+        <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
+        <Setter Property="TextAlignment" Value="Right"/>
+        <Setter Property="IsReadOnly" Value="True"/>
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="IsHitTestVisible" Value="False"/>
+        <Setter Property="Padding" Value="10,8,10,18"/>
+    </Style>
+
     <!-- ========================================================== 分栏拖手 -->
     <Style x:Key="SplitterThin" TargetType="GridSplitter">
         <Setter Property="Width" Value="7"/>
