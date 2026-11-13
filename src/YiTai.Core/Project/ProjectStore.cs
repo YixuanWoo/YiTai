@@ -316,4 +316,186 @@ public sealed class ProjectStore
             ? ProjectLayout.ToRelative(Root, full)
             : full;
     }
+
+    // ================================================================ 译文（独立文档，不挂在源文件上）
+
+    /// <summary>译文目录（绝对路径）。所有译文都落在这一处。</summary>
+    public string TranslationsDir => ProjectLayout.Translations(Root);
+
+    /// <summary>一篇译文的绝对路径。</summary>
+    public string TranslationAbsPath(TranslationEntry entry) =>
+        Path.Combine(TranslationsDir, entry.FileName);
+
+    /// <summary>
+    /// 让清单和磁盘对齐：translations\ 里每个 md/txt 都有一条，磁盘上没的条目就丢弃。
+    /// 打开项目时调一次 —— 这样"用户在外面拿编辑器新建了一篇"也能立刻出现在下拉里。
+    /// </summary>
+    public List<TranslationEntry> SyncTranslations()
+    {
+        string dir = TranslationsDir;
+        Directory.CreateDirectory(dir);
+
+        var onDisk = new List<string>();
+        foreach (string f in Directory.GetFiles(dir))
+        {
+            string ext = Path.GetExtension(f).ToLowerInvariant();
+            if (ext is ".md" or ".markdown" or ".txt") onDisk.Add(Path.GetFileName(f));
+        }
+        onDisk.Sort(StringComparer.OrdinalIgnoreCase);
+
+        Meta.Translations ??= new List<TranslationEntry>();
+
+        // 磁盘上没有的，从清单里去掉（文件被删/改名了，下拉就不该再留着它）
+        Meta.Translations.RemoveAll(t =>
+            !onDisk.Exists(n => string.Equals(n, t.FileName, StringComparison.OrdinalIgnoreCase)));
+
+        // 磁盘上有、清单里没有的，补进来
+        foreach (string n in onDisk)
+        {
+            if (!Meta.Translations.Exists(t => string.Equals(t.FileName, n, StringComparison.OrdinalIgnoreCase)))
+            {
+                var e = new TranslationEntry { FileName = n };
+                Meta.Translations.Add(e);
+            }
+        }
+
+        foreach (var t in Meta.Translations)
+        {
+            if (t.Id.Length == 0) t.Id = Guid.NewGuid().ToString("N").Substring(0, 8);
+            t.FileName ??= "";
+            t.Note ??= "";
+        }
+
+        // 顺序 = 文件名"自然序"（第01章 / 第02章 / … / 第10章，不是 1、10、2）
+        Meta.Translations.Sort((a, b) => NaturalCompare(a.FileName, b.FileName));
+
+        return Meta.Translations;
+    }
+
+    /// <summary>
+    /// 文件名自然排序：数字段按数值比，其余按字符比。
+    /// 为什么要它："第10章"按纯字典序会排到"第2章"前面，而下拉里第一项就是默认打开的，
+    /// 排错了人一开软件看到的就不是第一章。
+    /// </summary>
+    private static int NaturalCompare(string a, string b)
+    {
+        int i = 0, j = 0;
+        while (i < a.Length && j < b.Length)
+        {
+            char ca = a[i], cb = b[j];
+
+            if (char.IsDigit(ca) && char.IsDigit(cb))
+            {
+                long na = 0, nb = 0;
+                while (i < a.Length && char.IsDigit(a[i])) { na = na * 10 + (a[i] - '0'); i++; }
+                while (j < b.Length && char.IsDigit(b[j])) { nb = nb * 10 + (b[j] - '0'); j++; }
+                if (na != nb) return na < nb ? -1 : 1;
+                continue;
+            }
+
+            if (ca != cb) return ca < cb ? -1 : 1;
+            i++; j++;
+        }
+
+        if (i < a.Length) return 1;
+        if (j < b.Length) return -1;
+        return 0;
+    }
+
+    /// <summary>
+    /// 新建一篇译文（空文件，落进 translations\）。名字重复就加 (2)。
+    /// 这是"一个译文都没有时也能直接开始写"的入口 —— 不需要先有源文件。
+    /// </summary>
+    public TranslationEntry NewTranslation(string? name = null)
+    {
+        Directory.CreateDirectory(TranslationsDir);
+
+        string stem = Path.GetFileNameWithoutExtension((name ?? "").Trim());
+        if (stem.Length == 0) stem = "未命名";
+        foreach (char bad in Path.GetInvalidFileNameChars()) stem = stem.Replace(bad, '_');
+
+        string fileName = stem + ".md";
+        int n = 2;
+        while (File.Exists(Path.Combine(TranslationsDir, fileName)))
+            fileName = $"{stem} ({n++}).md";
+
+        TextFile.WriteAtomic(Path.Combine(TranslationsDir, fileName), "", "\n", withBom: false);
+
+        var entry = new TranslationEntry { FileName = fileName };
+        var list = SyncTranslations();
+        Meta.LastTranslationId = entry.Id;
+        Save();
+
+        // SyncTranslations 可能新建了同名的另一条，返回清单里那一条，保证 Id 一致
+        foreach (var t in list)
+            if (string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase)) return t;
+
+        return entry;
+    }
+
+    /// <summary>
+    /// 把一个已有的 md/txt 收进项目当译文（复制进 translations\，原文件不动）。
+    /// 同名已存在就加 (2)，绝不悄悄覆盖 —— 那可能是他自己改过的一版。
+    /// </summary>
+    public TranslationEntry ImportTranslation(string sourcePath)
+    {
+        if (!File.Exists(sourcePath)) throw new FileNotFoundException("找不到这个文件：" + sourcePath);
+
+        Directory.CreateDirectory(TranslationsDir);
+
+        string name = Path.GetFileName(sourcePath);
+        string dest = Path.Combine(TranslationsDir, name);
+
+        if (File.Exists(dest))
+        {
+            string stem = Path.GetFileNameWithoutExtension(name);
+            string ext = Path.GetExtension(name);
+            int n = 2;
+            while (File.Exists(Path.Combine(TranslationsDir, $"{stem} ({n}){ext}"))) n++;
+            name = $"{stem} ({n}){ext}";
+            dest = Path.Combine(TranslationsDir, name);
+        }
+
+        File.Copy(sourcePath, dest, overwrite: false);
+
+        SyncTranslations();
+        Save();
+
+        foreach (var t in Meta.Translations)
+            if (string.Equals(t.FileName, name, StringComparison.OrdinalIgnoreCase)) return t;
+
+        throw new InvalidOperationException("译文收进来了，但清单没记上：" + name);
+    }
+
+    /// <summary>给译文改个显示名（改的就是磁盘文件名，避免清单和文件各说各话）。</summary>
+    public TranslationEntry RenameTranslation(TranslationEntry entry, string newName)
+    {
+        string stem = Path.GetFileNameWithoutExtension((newName ?? "").Trim());
+        if (stem.Length == 0) throw new InvalidOperationException("名字不能是空的。");
+        foreach (char bad in Path.GetInvalidFileNameChars()) stem = stem.Replace(bad, '_');
+
+        string ext = Path.GetExtension(entry.FileName);
+        if (ext.Length == 0) ext = ".md";
+
+        string target = stem + ext;
+        string src = TranslationAbsPath(entry);
+        string dst = Path.Combine(TranslationsDir, target);
+
+        if (!string.Equals(src, dst, StringComparison.OrdinalIgnoreCase))
+        {
+            string unique = target;
+            int n = 2;
+            while (File.Exists(Path.Combine(TranslationsDir, unique))) unique = $"{stem} ({n++}){ext}";
+            File.Move(src, Path.Combine(TranslationsDir, unique));
+            entry.FileName = unique;
+        }
+
+        SyncTranslations();
+        Save();
+        return entry;
+    }
+
+    /// <summary>清单里是否已有这个译文文件名。</summary>
+    public bool HasTranslationFile(string fileName) =>
+        Meta.Translations.Exists(t => string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase));
 }

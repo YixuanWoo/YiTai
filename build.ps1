@@ -38,6 +38,18 @@ if ($Release) {
     if (Test-Path -LiteralPath $exe) {
         $mb = [math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 1)
         Write-Host "完成：$exe（$mb MB）" -ForegroundColor Green
+
+        # dist 那份是"拷给别人"用的；根目录这份才是平时双击的入口。
+        # 两处不同步，就会出现"代码改了、打开的还是老版本"这种假象（已经吃过一次）。
+        # 根目录那份若正在运行，覆盖不了也不该让发布失败，所以只警告。
+        $rootExe = Join-Path $root 'YiTai.exe'
+        try {
+            Copy-Item -LiteralPath $exe -Destination $rootExe -Force -ErrorAction Stop
+            Write-Host "已同步到 $rootExe" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "根目录那份正在运行，没能覆盖：$($_.Exception.Message)" -ForegroundColor Yellow
+        }
     }
 }
 else {

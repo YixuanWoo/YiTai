@@ -22,6 +22,15 @@ public sealed class AppSettings
     /// <summary>上次选中的源文件 Id。</summary>
     public string LastSourceId { get; set; } = "";
 
+    /// <summary>上次选中的译文 Id（译文是独立文档，不再挂在源文件上）。</summary>
+    public string LastTranslationId { get; set; } = "";
+
+    /// <summary>
+    /// 最近打开过的资料文件（绝对路径，最多留几十条）。
+    /// 放在下拉里方便一键换回来 —— 只是"最近用过"，不代表它属于这个项目。
+    /// </summary>
+    public List<string> RecentRefFiles { get; set; } = new();
+
     /// <summary>
     /// 每个项目上次开着的对照栏（键是项目根的小写全路径）。
     /// 按项目分开记：换个项目不该把上一本排列搬过去。

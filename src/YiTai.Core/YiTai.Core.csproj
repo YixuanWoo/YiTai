@@ -23,4 +23,11 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- 读 PDF 文字层用。唯一的外部依赖（Apache-2.0，纯托管代码，无原生 dll）。
+         自己写 PDF 解析要应付 xref、对象流、Flate、字体编码和 ToUnicode CMap，
+         在容错上得不偿失。只在这一层用，界面层仍不碰第三方。 -->
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+  </ItemGroup>
+
 </Project>

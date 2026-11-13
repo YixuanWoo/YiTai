@@ -28,8 +28,30 @@ public sealed class ProjectMeta
     /// <summary>源文件清单，顺序即左侧下拉里的顺序。</summary>
     public List<SourceEntry> Sources { get; set; } = new();
 
+    /// <summary>
+    /// 译文清单。**和源文件清单没有对应关系**：译文是独立的一篇文档，
+    /// 叫什么、写哪一页，由人决定，不由"源文件第几章"派生。
+    /// 磁盘上是 translations\ 里的 .md，这里只是索引（按文件名排）。
+    /// </summary>
+    public List<TranslationEntry> Translations { get; set; } = new();
+
+    /// <summary>上次打开的译文（按 Id 记，改名也不丢）。</summary>
+    public string? LastTranslationId { get; set; }
+
     /// <summary>上次打开的是哪一个源文件（按 Id 记，改名也不丢）。</summary>
     public string? LastSourceId { get; set; }
+}
+
+/// <summary>一篇译文。位置一律在 translations\ 里（统一落盘），只记文件名。</summary>
+public sealed class TranslationEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N").Substring(0, 8);
+
+    /// <summary>相对 translations\ 的文件名。</summary>
+    public string FileName { get; set; } = "";
+
+    /// <summary>给人看的备注，程序不解释。</summary>
+    public string Note { get; set; } = "";
 }
 
 public sealed class SourceEntry

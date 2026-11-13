@@ -41,10 +41,11 @@
                 <MenuItem Header="打开项目…" InputGestureText="Ctrl+O" Click="OnOpenProject"/>
                 <Separator/>
                 <MenuItem x:Name="MiSave" Header="保存" InputGestureText="Ctrl+S" Click="OnSave"/>
-                <MenuItem x:Name="MiSaveAs" Header="另存为…" Click="OnSaveAs"/>
+                <MenuItem x:Name="MiSaveAs" Header="给这篇译文改名…" Click="OnSaveAs"/>
                 <Separator/>
-                <MenuItem x:Name="MiImport" Header="导入源文件…" Click="OnImport"/>
-                <MenuItem x:Name="MiLink" Header="关联已有译文…" Click="OnLinkTranslations"/>
+                <MenuItem x:Name="MiNewTrans" Header="新建译文…" InputGestureText="Ctrl+Shift+N" Click="OnNewTranslation"/>
+                <MenuItem x:Name="MiImportTrans" Header="把已有文件收进来当译文…" Click="OnImportTranslation"/>
+                <MenuItem x:Name="MiOpenRef" Header="打开文件看（只读）…" Click="OnOpenRefFile"/>
                 <Separator/>
                 <MenuItem Header="退出" Click="OnExit"/>
             </MenuItem>
@@ -60,13 +61,17 @@
                 Padding="14,9">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BtnNewTrans" Content="＋ 新建译文" Style="{StaticResource Btn}"
+                            Click="OnNewTranslation" Margin="0,0,8,0"
+                            ToolTip="不用先有原文：起个名字就能开始写，译文统一落在 translations 里"/>
                     <Button x:Name="BtnAddPane" Content="＋ 对照栏" Style="{StaticResource Btn}"
                             Click="OnAddPane" Margin="0,0,8,0"
-                            ToolTip="再加一栏：资料、原文、别的语言的译文都能摊在同一屏"/>
+                            ToolTip="再加一栏：任何文件都能放进来，只读，不会进项目"/>
                     <Button x:Name="BtnSave" Content="保存" Style="{StaticResource BtnAccent}"
                             Click="OnSave" Margin="0,0,8,0"/>
-                    <Button x:Name="BtnImport" Content="导入源文件" Style="{StaticResource Btn}"
-                            Click="OnImport" Margin="0,0,8,0"/>
+                    <Button x:Name="BtnOpenFile" Content="打开文件" Style="{StaticResource Btn}"
+                            Click="OnOpenRefFile" Margin="0,0,8,0"
+                            ToolTip="打开任何文件当对照资料（只读，不复制、不改项目）"/>
                     <Button x:Name="BtnOpen" Content="打开项目" Style="{StaticResource Btn}"
                             Click="OnOpenProject"/>
                 </StackPanel>
@@ -113,7 +118,7 @@
                                        Foreground="{DynamicResource TextDim}"/>
                             <ComboBox x:Name="CmbSources" FontSize="12.5" IsEnabled="False"
                                       SelectionChanged="OnSourceChanged"
-                                      ToolTip="切换要翻译的章节（「跟随当前章」的对照栏会一起换）"/>
+                                      ToolTip="切换译文（这里只列译文，不列资料）"/>
                         </DockPanel>
                     </Border>
 
@@ -134,6 +139,23 @@
                                                   Background="{DynamicResource BgCard}"
                                                   VerticalScrollBarVisibility="Auto"
                                                   HorizontalScrollBarVisibility="Disabled"/>
+
+                        <!-- 一篇译文都没有时：这里就不是一块死灰，直接给个能按的按钮 -->
+                        <StackPanel x:Name="EmptyTrans" Visibility="Collapsed"
+                                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Margin="24" MaxWidth="340">
+                            <TextBlock x:Name="TxtEmptyTitle" Text="这个项目还没有译文"
+                                       FontSize="13.5" FontWeight="SemiBold"
+                                       HorizontalAlignment="Center" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtEmptyHint"
+                                       Text="不用先有原文 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。"
+                                       FontSize="11.5" Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="18"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       HorizontalAlignment="Center" TextAlignment="Center"/>
+                            <Button x:Name="BtnEmptyNewTrans" Content="＋ 新建一篇译文"
+                                    Style="{StaticResource BtnAccent}" Margin="0,14,0,0"
+                                    HorizontalAlignment="Center" Click="OnNewTranslation"/>
+                        </StackPanel>
                     </Grid>
                 </DockPanel>
             </Border>

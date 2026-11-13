@@ -70,7 +70,28 @@ public partial class MainWindow
 
         public Canvas? LineLayer;
 
+        /// <summary>
+        /// 这一栏现在显示的是真文件（不是"还没打开项目"这类提示语），
+        /// 并且能点出"译到这里"。原文、别的源文件、译文、导入的 md/txt/pdf 都算。
+        /// </summary>
+        public bool Markable;
+
+        /// <summary>
+        /// 进度记在哪个名字下。原文用源文件名；别的栏用它自己那份文件的文件名。
+        /// 于是"在法语 PDF 上点"记的是法国 PDF 的进度，不会把原文的进度改掉。
+        /// </summary>
+        public string ProgressKey = "";
+
         public TextBlock Caption = null!;
+
+        /// <summary>
+        /// 这一栏如果是 PDF，正文换成 WebView2（Edge 内核直接把原件画出来：图、版式、页码都在）。
+        /// 这种情况下 Body 是 null，也不再有点选进度那套（拿不到文字坐标）。
+        /// </summary>
+        public Microsoft.Web.WebView2.Wpf.WebView2? PdfView;
+
+        /// <summary>这一栏当前排出来的正文。底栏"译到 X/Y 字"要用它数非空白字，改竖线时不必再读一遍文件。</summary>
+        public string PaneText = "";
 
         /// <summary>底栏原本该写的字（字数/段数）；进度那句话是接在它后面的。</summary>
         public string BaseCaption = "";
@@ -94,15 +115,15 @@ public partial class MainWindow
 
     // ================================================================ 生命周期
 
-    /// <summary>窗口刚建好：先摆一栏"跟随当前章"，等项目打开再按项目记忆替换。</summary>
+    /// <summary>窗口刚建好：先摆一栏空的；打开项目时再按项目记忆替换。</summary>
     private void InitPanes()
     {
         _panes.Clear();
-        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.FollowSource }));
+        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
         RebuildPanes();
     }
 
-    /// <summary>换项目时调用：恢复这个项目上次的栏位，没有就只给一栏原文。</summary>
+    /// <summary>换项目时调用：恢复这个项目上次的栏位，没有就给一栏空的。</summary>
     private void LoadPanesForProject()
     {
         _panes.Clear();
@@ -119,12 +140,12 @@ public partial class MainWindow
             {
                 if (_panes.Count >= MaxRefPanes) break;
                 if (s == null) continue;
-                _panes.Add(NewPane(s));
+                _panes.Add(NewPane(NormalizeSpec(s)));
             }
         }
 
         if (_panes.Count == 0)
-            _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.FollowSource }));
+            _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
 
         if (key.Length > 0 && _settings.PaneWeightsByProject.TryGetValue(key, out var w) && w != null)
         {
@@ -133,6 +154,36 @@ public partial class MainWindow
         }
 
         RebuildPanes();
+    }
+
+    /// <summary>
+    /// 旧版设置里栏位还分"跟随当前章 / 项目里的源 / 项目里的译文"三种。
+    /// 那一套已经废了：栏里只记"一个文件在哪"。这里把旧记录折算成绝对路径，
+    /// 折不出真实文件就当作空栏 —— 宁可空着等人自己挑，也不擅自替人决定看什么。
+    /// </summary>
+    private RefDocSpec NormalizeSpec(RefDocSpec s)
+    {
+        var spec = CloneSpec(s);
+        spec.Kind = RefKind.External;
+
+        if (spec.Path.Length == 0) return spec;
+
+        // 旧记录可能是相对项目根的路径，也可能是 sources\ 里的文件名
+        string abs = ProjectLayout.ToAbsolute(_store?.Root ?? "", spec.Path);
+        if (File.Exists(abs)) { spec.Path = Path.GetFullPath(abs); return spec; }
+
+        string inSources = Path.Combine(ProjectLayout.Sources(_store?.Root ?? ""), spec.Path);
+        if (File.Exists(inSources)) { spec.Path = Path.GetFullPath(inSources); return spec; }
+
+        string inTrans = Path.Combine(ProjectLayout.Translations(_store?.Root ?? ""), spec.Path);
+        if (Path.IsPathRooted(spec.Path) == false && File.Exists(inTrans))
+        {
+            spec.Path = Path.GetFullPath(inTrans);
+            return spec;
+        }
+
+        spec.Path = "";   // 找不到就空着，别指着一个不存在的路径
+        return spec;
     }
 
     /// <summary>把当前栏位写进设置（只进内存，落盘由窗口关闭时统一做）。</summary>
@@ -355,7 +406,29 @@ public partial class MainWindow
         DockPanel.SetDock(footBar, Dock.Bottom);
         dock.Children.Add(footBar);
 
-        // ---------------------------------------------------------- 正文：渲染后的 Markdown
+        // ---------------------------------------------------------- 正文：Markdown / 纯文本 / PDF 原件
+        // PDF 这一栏不排文字，直接让 Edge 内核把原件画出来 —— 图、分栏、页码、字体全在，
+        // 因为你要的是"看这本书"，不是"看这本书被我抽成的一串字"。
+        if (IsPdfPath(pane.Spec.Path))
+        {
+            var web = new Microsoft.Web.WebView2.Wpf.WebView2
+            {
+                // 别把缓存写进程序目录（单文件版会在一堆 PDF 旁边生成 EBWebView 文件夹）
+                CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties
+                {
+                    UserDataFolder = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "YiTai", "WebView2"),
+                },
+            };
+
+            pane.PdfView = web;
+            dock.Children.Add(web);
+
+            border.Child = dock;
+            return border;
+        }
+
         // 用只读的 RichTextBox 而不是纯显示控件：
         //   · 加粗/斜体/标题/列表/代码块都画得出来（它装的就是一份 FlowDocument）；
         //   · 它按"给多宽就按多宽折行"排版，放大字号只会变高、不会溢出栏宽；
@@ -456,14 +529,79 @@ public partial class MainWindow
             return;
         }
 
-        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.FollowSource }));
+        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
         _weights.Clear();   // 栏数变了，旧比例不适用
         RebuildPanes();
         SavePaneLayout();
     }
 
-    private void RemovePane(int index)
+    /// <summary>
+    /// 把若干文件各摆成一栏：只读、原件显示、不复制、不进项目。
+    /// 这是"打开文件"的正路 —— 不判断格式、不判断它是原文还是译文，也不动译文栏。
+    /// </summary>
+    private void AddRefPanes(IEnumerable<string> paths)
     {
+        bool anyAdded = false;
+
+        foreach (string p in paths)
+        {
+            // 已经有空栏就先填进空栏 —— 不然点一次"打开文件"就平白多长出一栏
+            PaneView? blank = null;
+            foreach (var pane in _panes)
+                if (pane.Spec.Path.Length == 0) { blank = pane; break; }
+
+            if (blank != null)
+            {
+                blank.Spec = new RefDocSpec
+                {
+                    Kind = RefKind.External,
+                    Path = Path.GetFullPath(p),
+                    Label = Path.GetFileName(p),
+                    Zoom = blank.Spec.Zoom,      // 空栏自己那点缩放留着
+                };
+
+                RememberRef(p);
+                anyAdded = true;
+                continue;
+            }
+
+            if (_panes.Count >= MaxRefPanes)
+            {
+                Warn("对照栏满了", $"最多 {MaxRefPanes} 栏，再多每栏只剩一条缝。先关掉一栏再打开。");
+                break;
+            }
+
+            _panes.Add(NewPane(new RefDocSpec
+            {
+                Kind = RefKind.External,
+                Path = Path.GetFullPath(p),
+                Label = Path.GetFileName(p),
+                Zoom = 1.0,
+            }));
+
+            RememberRef(p);
+            anyAdded = true;
+        }
+
+        if (!anyAdded) return;
+
+        // 栏数没变的话，权重还留着（填进空栏不该把用户拖好的比例清掉）
+        RebuildPanes();
+        SavePaneLayout();
+    }
+
+    /// <summary>记住"打开过的文件"，供下拉里一键换回来（只留最近 20 个）。</summary>
+    private void RememberRef(string path)
+    {
+        string full = Path.GetFullPath(path);
+        _settings.RecentRefFiles.RemoveAll(f => string.Equals(f, full, StringComparison.OrdinalIgnoreCase));
+        _settings.RecentRefFiles.Insert(0, full);
+
+        while (_settings.RecentRefFiles.Count > 20)
+            _settings.RecentRefFiles.RemoveAt(_settings.RecentRefFiles.Count - 1);
+    }
+
+    private void RemovePane(int index)    {
         if (index < 0 || index >= _panes.Count) return;
 
         _panes.RemoveAt(index);
@@ -491,56 +629,41 @@ public partial class MainWindow
     // ================================================================ 选文件
 
     /// <summary>
-    /// 这一栏能选什么：跟随当前章 / 项目里每一份原文 / 项目里每一份译文 /
-    /// 已经打开过的外部文件 / 最后一个"打开别的文件…"。
+    /// 这一栏能选什么：就是"一个文件"。
+    /// 不再分"原文 / 译文 / 资料" —— 软件没有资格判断一份文件在这个人手里算什么，
+    /// 放进来的东西一律只读，怎么用由他自己决定。
     /// </summary>
     private List<PaneChoice> BuildChoices()
     {
         var list = new List<PaneChoice>();
 
-        list.Add(new PaneChoice
-        {
-            Display = "原文 · 跟随当前章",
-            Spec = new RefDocSpec { Kind = RefKind.FollowSource },
-        });
-
-        if (_store != null)
-        {
-            foreach (var s in _store.Meta.Sources)
-            {
-                list.Add(new PaneChoice
-                {
-                    Display = "原文 · " + s.FileName,
-                    Spec = new RefDocSpec { Kind = RefKind.Source, Path = s.FileName, Label = s.FileName },
-                });
-
-                string abs = _store.TranslationPath(s);
-                string rel = abs.StartsWith(_store.Root, StringComparison.OrdinalIgnoreCase)
-                    ? ProjectLayout.ToRelative(_store.Root, abs)
-                    : abs;
-
-                list.Add(new PaneChoice
-                {
-                    Display = "译文 · " + Path.GetFileName(abs),
-                    Spec = new RefDocSpec { Kind = RefKind.Translation, Path = rel, Label = Path.GetFileName(abs) },
-                });
-            }
-        }
-
-        // 已经作为外部文件开着的，补回下拉，别让它一重建就从列表里消失
+        // 当前这几栏开着的东西（同一份文件只列一次）
         foreach (var p in _panes)
         {
-            if (p.Spec.Kind != RefKind.External) continue;
             if (list.Exists(c => !c.Browse && SameSpec(c.Spec, p.Spec))) continue;
 
+            string name = Path.GetFileName(p.Spec.Path);
             list.Add(new PaneChoice
             {
-                Display = "文件 · " + Path.GetFileName(p.Spec.Path),
+                Display = name.Length > 0 ? name : "（这一栏还没放东西）",
                 Spec = CloneSpec(p.Spec),
             });
         }
 
-        list.Add(new PaneChoice { Display = "打开别的文件…", Browse = true });
+        // 最近打开过的（去重、只留还存在的）
+        foreach (string f in _settings.RecentRefFiles)
+        {
+            if (f.Length == 0 || !File.Exists(f)) continue;
+            if (list.Exists(c => !c.Browse && string.Equals(c.Spec.Path, f, StringComparison.OrdinalIgnoreCase))) continue;
+
+            list.Add(new PaneChoice
+            {
+                Display = Path.GetFileName(f),
+                Spec = new RefDocSpec { Kind = RefKind.External, Path = f, Label = Path.GetFileName(f) },
+            });
+        }
+
+        list.Add(new PaneChoice { Display = "打开文件…", Browse = true });
 
         return list;
     }
@@ -555,8 +678,8 @@ public partial class MainWindow
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "打开一份对照文档（只读，不会进项目）",
-                Filter = "文本 (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|所有文件 (*.*)|*.*",
+                Title = "打开一份资料（只读，不复制、不进项目）",
+                Filter = "所有文件 (*.*)|*.*|文本 (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|PDF (*.pdf)|*.pdf",
             };
 
             if (dlg.ShowDialog(this) != true)
@@ -575,15 +698,29 @@ public partial class MainWindow
                 Zoom = pane.Spec.Zoom,
             };
 
+            RememberRef(dlg.FileName);
             RebuildPanes();     // 下拉要把这份文件补进去
             SavePaneLayout();
             return;
         }
 
         double keepZoom = pane.Spec.Zoom;   // 换文档不重置这一栏的显示比例
+        bool wasPdf = IsPdfPath(pane.Spec.Path);
+
         pane.Spec = CloneSpec(choice.Spec);
         pane.Spec.Zoom = keepZoom;
-        RefreshOne(pane);
+
+        // PDF 用 WebView2、其他用 RichTextBox：换了类型就得把这一栏重摆，光刷新文档不行
+        if (wasPdf != IsPdfPath(pane.Spec.Path))
+        {
+            _weights.Clear();
+            RebuildPanes();
+        }
+        else
+        {
+            RefreshOne(pane);
+        }
+
         SavePaneLayout();
     }
 
@@ -605,14 +742,24 @@ public partial class MainWindow
 
     private void RefreshOne(PaneView pane)
     {
+        long t0 = Diag.Tick();
+
+        if (pane.PdfView != null) { RefreshPdfPane(pane); return; }
+
         if (pane.Body == null) return;   // 刚加进来还没画
 
         double zoom = Math.Clamp(pane.Spec.Zoom, MinZoom, MaxZoom);
         string text = ResolvePaneContent(pane.Spec, out string note, out bool exists, out bool isMarkdown);
         var style = MakeStyle(zoom);
 
-        // "译到哪了"的绿线：只画在"跟随当前章"那一栏，且这一栏得是真有内容
-        int marker = exists && pane.Spec.Kind == RefKind.FollowSource ? CurrentOffset() : -1;
+        // "译到哪了"的竖线：这一栏能点就画，进度记在这一栏自己那份文件的名字下
+        pane.ProgressKey = exists ? ProgressKeyOf(pane.Spec) : "";
+        pane.Markable = exists && text.Length > 0 && pane.ProgressKey.Length > 0;
+
+        // 换了文件，撤销账本里那条就指向旧文件了 —— 切章/换源之后不能再撤上一轮的线
+        ForgetUndo();
+
+        int marker = pane.Markable ? ProgressStore.Get(_progress, pane.ProgressKey) : -1;
 
         try
         {
@@ -632,67 +779,111 @@ public partial class MainWindow
         if (pane.Caption != null)
         {
             pane.BaseCaption = note;
-            pane.Caption.Text = WithProgress(note, marker, text);
+            pane.PaneText = text;
+            pane.Caption.Text = WithProgress(note, marker, pane.PaneText);
         }
 
         UpdateMarkerVisual(pane);   // 竖线单独一层，改文档不用重画
+
+        // 文档刚换进来时字还没排出来，这一下多半算不出位置。
+        // 排到布局完成之后（Loaded 优先级）再补算一次 ——
+        // 原先这件事是靠每帧都跑的 LayoutUpdated 兜的，那等于让程序一直空转。
+        Dispatcher.BeginInvoke(
+            new Action(() => UpdateMarkerVisual(pane)),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+
+        Diag.AddRefresh(t0, _panes.Count, text.Length);
+    }
+
+    /// <summary>
+    /// PDF 栏：不打字、不抽文本，直接让 Edge 内核渲染原件。
+    /// 代价是这栏拿不到"点在哪个字上"，所以它不出进度线 —— 要文字和进度线的那一栏，
+    /// 把另一栏指着同一份文件（走文本模式）即可。
+    /// </summary>
+    private void RefreshPdfPane(PaneView pane)
+    {
+        var web = pane.PdfView;
+        if (web == null) return;
+
+        pane.Markable = false;
+        pane.ProgressKey = "";
+
+        string path = pane.Spec.Path;
+        bool exists = File.Exists(path);
+
+        if (pane.Caption != null)
+        {
+            pane.BaseCaption = exists
+                ? "PDF · " + Path.GetFileName(path) + " · 原件"
+                : "PDF · " + Path.GetFileName(path) + " · 这个文件不在了";
+            pane.Caption.Text = pane.BaseCaption;
+        }
+
+        // 缩放按钮 / Ctrl+滚轮在这一栏调的是 PDF 的显示比例
+        double zoom = Math.Clamp(pane.Spec.Zoom, MinZoom, MaxZoom);
+        web.ZoomFactor = zoom;
+
+        if (!exists) return;
+
+        try
+        {
+            var uri = new Uri(path);
+            if (web.Source == null || web.Source.AbsoluteUri != uri.AbsoluteUri)
+                web.Source = uri;
+        }
+        catch (Exception)
+        {
+            // 路径里有怪异字符导致 URI 建不出来：不崩，底栏已经写明文件名
+        }
     }
 
     /// <summary>一栏该显示什么。exists=false 表示这段字是提示语，不是文件内容。</summary>
     private string ResolvePaneContent(RefDocSpec spec, out string note, out bool exists, out bool isMarkdown)
     {
-        if (spec.Kind == RefKind.FollowSource)
+        if (spec.Path.Length == 0)
         {
-            if (_store == null)
-            {
-                note = "还没打开项目";
-                exists = false;
-                isMarkdown = false;
-                return "先从「文件 → 新建项目 / 打开项目」开始：\n\n" +
-                       "选一个文件夹当项目根，里面会建 sources（原文）、translations（译文）、backups（备份）。\n" +
-                       "这一栏会一直跟着当前章的原文走，切章自动换。";
-            }
-
-            if (_current == null)
-            {
-                note = "项目里还没有源文件";
-                exists = false;
-                isMarkdown = false;
-                return "这个项目还没有源文件。文件 → 导入源文件，选几个 md/txt 进来。";
-            }
-
-            return ReadForDisplay(_store.SourcePath(_current), "原文 · " + _current.FileName, out note, out exists, out isMarkdown);
+            note = "还没放东西";
+            exists = false;
+            isMarkdown = false;
+            return "这一栏还空着。\n\n点栏顶的下拉选「打开文件…」，挑一份什么都行 —— 只读，不复制，也不进项目。";
         }
 
-        if (spec.Kind == RefKind.Source)
+        if (!File.Exists(spec.Path))
         {
-            if (_store == null)
-            {
-                note = "还没打开项目";
-                exists = false;
-                isMarkdown = false;
-                return "";
-            }
-
-            return ReadForDisplay(
-                Path.Combine(ProjectLayout.Sources(_store.Root), spec.Path),
-                "原文 · " + spec.Path, out note, out exists, out isMarkdown);
+            note = "文件不在了";
+            exists = false;
+            isMarkdown = false;
+            return "找不到这个文件（可能被移走、改名或删了）：\n\n" + spec.Path;
         }
 
-        if (spec.Kind == RefKind.Translation)
-        {
-            string abs = _store == null
-                ? spec.Path
-                : ProjectLayout.ToAbsolute(_store.Root, spec.Path);
-
-            return ReadForDisplay(abs, "译文 · " + Path.GetFileName(abs), out note, out exists, out isMarkdown);
-        }
-
-        return ReadForDisplay(spec.Path, "文件 · " + Path.GetFileName(spec.Path), out note, out exists, out isMarkdown);
+        return ReadForDisplay(spec.Path, Path.GetFileName(spec.Path), out note, out exists, out isMarkdown);
     }
 
     private string ReadForDisplay(string path, string caption, out string note, out bool exists, out bool isMarkdown)
     {
+        // PDF 走另一条路：先抽文字层，再当纯文本排。
+        // 抽一次要一两秒（两百多页的 PDF），所以按"路径 + 修改时间"缓存，
+        // 缩放、切章、重排都不会重复解析。
+        if (IsPdfPath(path))
+        {
+            var pdf = ReadPdfCached(path);
+            isMarkdown = false;
+
+            if (!pdf.Ok)
+            {
+                note = caption + " · 读不出字";
+                exists = false;
+                return "这份 PDF 没有可读的文字：\n\n" + pdf.Reason + "\n\n" + path +
+                       "\n\n扫描件只能当图片看，YiTai 不做 OCR。";
+            }
+
+            note = caption + " · PDF " + pdf.Pages + " 页 · " +
+                   TextStats.CountChars(pdf.Text) + " 字 · " +
+                   TextStats.CountParagraphs(pdf.Text) + " 段";
+            exists = true;
+            return pdf.Text;
+        }
+
         isMarkdown = IsMarkdownPath(path);
         var info = TextFile.Read(path);
 
@@ -708,6 +899,35 @@ public partial class MainWindow
         exists = true;
         return info.Text;
     }
+
+    /// <summary>PDF 解析结果缓存：路径 → (文件修改时刻, 结果)。文件被换掉才重解析。</summary>
+    private static readonly Dictionary<string, (DateTime Stamp, PdfTextResult Result)> PdfCache = new();
+
+    private static PdfTextResult ReadPdfCached(string path)
+    {
+        FileInfo info;
+
+        try { info = new FileInfo(path); }
+        catch (Exception) { return new PdfTextResult { Ok = false, Reason = "路径读不了" }; }
+
+        if (!info.Exists) return new PdfTextResult { Ok = false, Reason = "文件不在" };
+
+        string key = info.FullName.ToLowerInvariant();
+
+        var hit = PdfCache.TryGetValue(key, out var old) ? old : default;
+        if (hit.Result != null && hit.Stamp == info.LastWriteTimeUtc) return hit.Result;
+
+        var result = PdfText.Read(info.FullName);
+        PdfCache[key] = (info.LastWriteTimeUtc, result);
+        return result;
+    }
+
+    private static bool IsPdfPath(string path)
+        => string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>这一栏的进度记在哪个名字下 —— 就是它自己那份文件的名字，各栏各记各的。</summary>
+    private string ProgressKeyOf(RefDocSpec spec)
+        => spec.Path.Length == 0 ? "" : Path.GetFileName(spec.Path);
 
     /// <summary>.md / .markdown 才按 Markdown 画；其它（.txt 等）当纯文本，免得误吃格式。</summary>
     private static bool IsMarkdownPath(string path)

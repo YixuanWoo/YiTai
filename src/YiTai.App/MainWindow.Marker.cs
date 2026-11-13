@@ -47,32 +47,35 @@ public partial class MainWindow
     private int _pendingOffset = -1;
 
     /// <summary>
-    /// 排队等着落的标记。单击不立刻落，先等过一个系统双击间隔：
-    /// 双击的第一下也是"没选区的一次抬起"，若当场标，双击选词就变成"顺手标了个词"。
-    /// 第二下（ClickCount=2）一到，就把排队这条撤掉。
+    /// 撤销账本：上一次单击刚落下的那条线，落之前原本在哪个偏移。
+    /// 单击现在是"立刻落线"，所以双击时不是"取消排队"，而是"把刚落的那条收回去"。
     /// </summary>
-    private int _pendingClick = -1;
-
-    private System.Windows.Threading.DispatcherTimer? _clickTimer;
+    private PaneView? _undoPane;
+    private int _undoBefore = -1;
+    private DateTime _undoAt = DateTime.MinValue;
 
     /// <summary>
-    /// 上一次左键抬起的时刻。第二道"这是不是双击"的判据：
+    /// 上一次左键抬起的栏、位置与时刻。
     /// ClickCount 由系统给，但如果它没递进来（不同输入路径、触控板、远程桌面），
-    /// 光看它就会漏判 —— 那时双击仍然会插线。用时间间隔自己再判一次。
+    /// 光看它就漏判 —— 那时双击仍然会插线。所以再用"时间近 + 位置没动"补判一次。
     /// </summary>
+    private PaneView? _lastUpPane;
+    private Point _lastUpPoint;
     private DateTime _lastUpAt = DateTime.MinValue;
 
-    /// <summary>系统的双击间隔（毫秒）。比它短就等不住第二下。</summary>
+    /// <summary>系统的双击间隔（毫秒）。它决定"第二下多久之内来才算双击"，不是"落线要等多久"。</summary>
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int GetDoubleClickTime();
 
     /// <summary>
-    /// 等多久才认定"这一下是真单击"。
-    /// 系统默认多在 250～500ms 之间，但我们宁可等到 500ms：
-    /// 用户第二下按得快，落标就会抢在第二次按下之前，双击选词仍然会插一条线。
-    /// 这半秒只为"确定没有第二下"，线落下之后一切照旧。
+    /// 撤销窗口：第二下在这个时间内落到同一处，才认作双击、才收回第一下落下的线。
+    /// 取系统值即可（本机 200ms，Win 默认 500ms），不再人为放大 ——
+    /// 落线已经不等它了，窗口放大只会让"快速点了两处"被误当成双击。
     /// </summary>
-    private static int DoubleClickMs => Math.Max(500, GetDoubleClickTime());
+    private static int DoubleClickMs => Math.Max(200, GetDoubleClickTime());
+
+    /// <summary>判"同一处"的容差（像素）。系统双击矩形的尺寸通常就是这个量级。</summary>
+    private const double SameSpotTolerance = 6;
 
     // ---------------------------------------------------------------- 接线
 
@@ -101,10 +104,11 @@ public partial class MainWindow
     /// <summary>每栏的正文挂鼠标事件与位置刷新。BuildPane 里调。</summary>
     private void AttachMarkerEvents(PaneView pane, RichTextBox body)
     {
-        // 双击的第二下，按下就撤掉第一下排队的标记 —— 不等抬起，抢在它落标之前
+        // 双击的第二下，一按下就把第一下落下的线收回去：
+        // 若等抬起才撤，双击选词的整个过程里都会多一根线在那儿闪。
         body.PreviewMouseLeftButtonDown += (_, e) =>
         {
-            if (e.ClickCount > 1) CancelPendingMark();
+            if (e.ClickCount > 1) UndoLastMark();
         };
 
         body.PreviewMouseLeftButtonUp += (_, e) => OnPaneMouseUp(pane, e);
@@ -113,9 +117,13 @@ public partial class MainWindow
         // 栏宽变了，文字重新折行，线的位置也得重算
         body.SizeChanged += (_, _) => UpdateMarkerVisual(pane);
 
-        // 文档刚赋值时还没排版，那时算不出字符位置 —— 等布局完成后再摆一次线。
-        // 滚动、缩放、切章最终都会走到这里，所以这一条就把"线跟着文字走"兜住了。
-        body.LayoutUpdated += (_, _) => UpdateMarkerVisual(pane);
+        // 这里原本挂着 LayoutUpdated，每完成一轮布局就重算一次线的位置。
+        // 那是个死循环：UpdateMarkerVisual 会改线的可见性和高度，
+        // 改完又标脏布局 → 下一轮布局 → 又进这里，一秒钟六十轮，停不下来。
+        // 实测代价是程序空转着占满一个 CPU 核心，用一会儿就越来越迟钝。
+        //
+        // 现在改由"文档真的换了"这一处主动刷新（见 RefreshOne 里的延迟调用）：
+        // 换文档、改栏宽、滚动、缩放、点击落线，各有各的触发点，一个不少。
 
         // 滚动条只有等模板套上才存在，所以等 Loaded
         body.Loaded += (_, _) =>
@@ -131,74 +139,108 @@ public partial class MainWindow
 
     private void OnPaneMouseUp(PaneView pane, MouseButtonEventArgs e)
     {
-        if (pane.Spec.Kind != RefKind.FollowSource) return;   // 只有"跟随当前章"那栏有进度可言
-        if (_store == null || _current == null) return;
+        long t0 = Diag.Tick();
 
-        // 第二下（双击）来了：撤销第一下排队的那条，这一下也不标。
-        // 双击选词从此不会顺手在词上插一条竖线。
-        if (e.ClickCount > 1)
+        try
         {
-            CancelPendingMark();
-            _lastUpAt = DateTime.Now;
+            OnPaneMouseUpCore(pane, e);
+        }
+        finally
+        {
+            Diag.AddClick(t0);   // "点一下多久才动"直接看这个
+        }
+    }
+
+    private void OnPaneMouseUpCore(PaneView pane, MouseButtonEventArgs e)
+    {
+        if (!pane.Markable) return;   // 提示语、读不出的文件、空文件：都没有进度可言
+
+        Point at = e.GetPosition(pane.Body);
+
+        // 这一下是不是双击的第二下？两条判据：
+        //   ① 系统给的 ClickCount（权威）；
+        //   ② ClickCount 丢了的时候（触控板 / 远程桌面 / 别的输入路径），
+        //      时间够近 且 位置几乎没动，也算第二下。
+        //      两个条件必须同时成立，否则"快速点了两处"会被误判成双击，两处都丢掉。
+        bool second = e.ClickCount > 1
+            || (pane == _lastUpPane
+                && Math.Abs(at.X - _lastUpPoint.X) <= SameSpotTolerance
+                && Math.Abs(at.Y - _lastUpPoint.Y) <= SameSpotTolerance
+                && (DateTime.Now - _lastUpAt).TotalMilliseconds < DoubleClickMs);
+
+        _lastUpAt = DateTime.Now;
+        _lastUpPane = pane;
+        _lastUpPoint = at;
+
+        if (second)
+        {
+            UndoLastMark();   // 双击选词：把第一下抢先落下的线收回去
             return;
         }
 
-        // 松手时选着字 = 人家在拖选复制，别插一脚（拖选也不该动双击计时）
+        // 松手时选着字 = 人家在拖选复制，别插一脚
         if (!pane.Body.Selection.IsEmpty) return;
 
-        // ClickCount 没递进来的时候（触控板 / 远程桌面 / 别的输入路径），按时间自己判：
-        // 上一次抬起到现在还不到一个双击间隔，那这一下就是第二下。
-        bool tooFast = (DateTime.Now - _lastUpAt).TotalMilliseconds < DoubleClickMs;
-        _lastUpAt = DateTime.Now;
-
-        if (tooFast)
-        {
-            CancelPendingMark();
-            return;
-        }
-
-        int offset = OffsetAtPoint(pane, e.GetPosition(pane.Body));
+        int offset = OffsetAtPoint(pane, at);
         if (offset < 0) return;                                // 点在栏的空白处
-        if (offset == CurrentOffset()) return;                 // 点在原处，什么都不用做
+        if (offset == CurrentOffset(pane)) return;             // 点在原处，什么都不用做
 
-        ScheduleMark(offset);
+        PlaceMarkNow(pane, offset);
     }
 
-    /// <summary>排一个待落的标记，过完双击间隔再落。</summary>
-    private void ScheduleMark(int offset)
+    /// <summary>
+    /// 单击 → 立刻落线，并把"落之前的位置"记进撤销账本。
+    /// 原来这里是等一个双击间隔再落，看起来"点了半天才动"；
+    /// 现在落线不等待，双击的风险改由第二下按下时的 UndoLastMark 收回去。
+    /// </summary>
+    private void PlaceMarkNow(PaneView pane, int offset)
     {
-        _pendingClick = offset;
+        long t0 = Diag.Tick();
 
-        if (_clickTimer == null)
-        {
-            _clickTimer = new System.Windows.Threading.DispatcherTimer();
-            _clickTimer.Tick += (_, _) =>
-            {
-                _clickTimer!.Stop();
+        _undoPane = pane;
+        _undoBefore = CurrentOffset(pane);
+        _undoAt = DateTime.Now;
 
-                int at = _pendingClick;
-                _pendingClick = -1;
-                if (at >= 0) SetMarker(at);
-            };
-        }
+        SetMarker(pane, offset);
 
-        _clickTimer.Stop();
-        _clickTimer.Interval = TimeSpan.FromMilliseconds(DoubleClickMs + 30);
-        _clickTimer.Start();
+        Diag.AddPlace(t0);
     }
 
-    private void CancelPendingMark()
+    /// <summary>
+    /// 把第一下刚落下的线收回到落之前的位置。
+    /// 账过期（超出了双击窗口）就不撤 —— 那是上一轮正经点过的位置，
+    /// 不能因为后来一次双击就抹掉。
+    /// </summary>
+    private void UndoLastMark()
     {
-        _pendingClick = -1;
-        _clickTimer?.Stop();
+        Diag.AddUndo();
+
+        var pane = _undoPane;
+        int before = _undoBefore;
+        DateTime at = _undoAt;
+
+        ForgetUndo();
+
+        if (pane == null) return;
+        if ((DateTime.Now - at).TotalMilliseconds > DoubleClickMs) return;
+
+        if (before < 0) ClearMarker(pane);
+        else SetMarker(pane, before);
+    }
+
+    /// <summary>把撤销账本清掉（右键、切章之后不该还能撤上一轮的线）。</summary>
+    private void ForgetUndo()
+    {
+        _undoPane = null;
+        _undoBefore = -1;
+        _undoAt = DateTime.MinValue;
     }
 
     private void OnPaneMouseRightUp(PaneView pane, MouseButtonEventArgs e)
     {
-        if (pane.Spec.Kind != RefKind.FollowSource) return;
-        if (_store == null || _current == null) return;
+        if (!pane.Markable) return;
 
-        CancelPendingMark();   // 右键要弹菜单了，别让刚排队的那一下稍后又落一条线
+        ForgetUndo();   // 右键要弹菜单了：账本清掉，免得下一记双击把右键之前那条线撤走
 
         int offset = OffsetAtPoint(pane, e.GetPosition(pane.Body));
         if (offset < 0) return;
@@ -208,11 +250,11 @@ public partial class MainWindow
         var menu = new ContextMenu { PlacementTarget = pane.Body };
 
         var put = new MenuItem { Header = "把进度标记放在这里" };
-        put.Click += (_, _) => SetMarker(_pendingOffset);
+        put.Click += (_, _) => SetMarker(pane, _pendingOffset);
         menu.Items.Add(put);
 
         var clear = new MenuItem { Header = "清除进度标记" };
-        clear.Click += (_, _) => ClearMarker();
+        clear.Click += (_, _) => ClearMarker(pane);
         menu.Items.Add(clear);
 
         // 必须等这一下右键彻底走完再弹：就在抬起事件里弹，菜单会立刻吃到同一次抬起，
@@ -274,30 +316,33 @@ public partial class MainWindow
 
     // ---------------------------------------------------------------- 落盘
 
-    private int CurrentOffset()
+    /// <summary>这一栏的进度：它自己那份文件记到哪儿了。没有就是 -1。</summary>
+    private int CurrentOffset(PaneView pane)
     {
-        if (_store == null || _current == null) return -1;
-        return ProgressStore.Get(_progress, _current.FileName);
+        if (_store == null || pane.ProgressKey.Length == 0) return -1;
+        return ProgressStore.Get(_progress, pane.ProgressKey);
     }
 
-    private void SetMarker(int offset, bool scroll = false)
+    private void SetMarker(PaneView pane, int offset, bool scroll = false)
     {
-        if (_store == null || _current == null) return;
+        if (_store == null || pane.ProgressKey.Length == 0) return;
 
         // 写不进盘（只读目录之类）也让线先立起来：界面不能因为存不了就卡住
-        try { ProgressStore.Set(_store.Root, _progress, _current.FileName, offset); }
+        long saveAt = Diag.Tick();
+        try { ProgressStore.Set(_store.Root, _progress, pane.ProgressKey, offset); }
         catch (Exception) { /* 记不住就算了，这一处线照样立 */ }
+        Diag.AddSave(saveAt);
 
         RefreshMarkerVisuals();
 
         if (scroll) ScrollToMarker();
     }
 
-    private void ClearMarker()
+    private void ClearMarker(PaneView pane)
     {
-        if (_store == null || _current == null) return;
+        if (_store == null || pane.ProgressKey.Length == 0) return;
 
-        try { ProgressStore.Set(_store.Root, _progress, _current.FileName, -1); }
+        try { ProgressStore.Set(_store.Root, _progress, pane.ProgressKey, -1); }
         catch (Exception) { /* 同上 */ }
 
         RefreshMarkerVisuals();
@@ -318,36 +363,73 @@ public partial class MainWindow
     private void RefreshMarkerVisuals()
     {
         foreach (var pane in _panes)
+        {
             UpdateMarkerVisual(pane);
+            UpdateCaption(pane);     // 竖线不重排文档，底栏那句"译到"就得单独刷
+        }
     }
 
-    /// <summary>把某一栏的竖线摆到当前标记旁边。没有标记 / 不是原文栏 → 藏起来。</summary>
+    /// <summary>只重写底栏那行字（字数、百分比），不动文档。</summary>
+    private void UpdateCaption(PaneView pane)
+    {
+        if (pane.Caption == null || pane.BaseCaption.Length == 0) return;
+        if (pane.ProgressKey.Length == 0) return;
+
+        int marker = ProgressStore.Get(_progress, pane.ProgressKey);
+        pane.Caption.Text = WithProgress(pane.BaseCaption, marker, pane.PaneText);
+    }
+
+    /// <summary>把某一栏的竖线摆到它自己的标记旁边。没标过 / 这一栏不能标 → 藏起来。</summary>
     private void UpdateMarkerVisual(PaneView pane)
+    {
+        if (!Diag.On) { UpdateMarkerVisualCore(pane); return; }
+
+        long t0 = Diag.Tick();
+        try { UpdateMarkerVisualCore(pane); }
+        finally { Diag.AddLayout(t0); }
+    }
+
+    private void UpdateMarkerVisualCore(PaneView pane)
     {
         var line = pane.Line;
         if (line == null) return;
 
-        line.Visibility = Visibility.Collapsed;
-
-        if (pane.Spec.Kind != RefKind.FollowSource) return;
-        if (_store == null || _current == null) return;
-
-        int offset = CurrentOffset();
-        if (offset < 0) return;
+        // 先算出"应该在哪"，再一次性决定显示与位置 —— 不先藏再显。
+        // 先藏再显每轮都让布局失效两次，而绝大多数刷新里位置根本没变，
+        // 那两个来回就是白干的（也是以前空转的一部分）。
+        Rect? rect = null;
 
         var doc = pane.Body?.Document;
-        if (doc == null) return;
+        if (pane.Markable && doc != null)
+        {
+            int offset = CurrentOffset(pane);
+            if (offset >= 0) rect = RectAtOffset(doc, offset);
+        }
 
-        Rect? rect = RectAtOffset(doc, offset);
-        if (rect == null) return;
+        if (rect == null || rect.Value.Height < 4)   // 没标过 / 那一处没排出高度（行间空隙）
+        {
+            if (line.Visibility != Visibility.Collapsed)
+                line.Visibility = Visibility.Collapsed;
+            return;
+        }
 
         Rect r = rect.Value;
-        if (r.Height < 4) return;          // 那一处没排出高度（行间空隙），不立线
 
         // 立在那个字的左边缘，高度取整行 —— 像一根光标，而不是一根分割线
-        Canvas.SetLeft(line, r.X - MarkerWidth / 2);
-        Canvas.SetTop(line, r.Y + 1);
-        line.Height = Math.Max(9, r.Height - 2);
+        double left = r.X - MarkerWidth / 2;
+        double top = r.Y + 1;
+        double height = Math.Max(9, r.Height - 2);
+
+        // 位置、高度都没变，本来就显示着：一个属性都别写
+        if (line.Visibility == Visibility.Visible
+            && Math.Abs(Canvas.GetLeft(line) - left) < 0.5
+            && Math.Abs(Canvas.GetTop(line) - top) < 0.5
+            && Math.Abs(line.Height - height) < 0.5)
+            return;
+
+        Canvas.SetLeft(line, left);
+        Canvas.SetTop(line, top);
+        line.Height = height;
         line.Visibility = Visibility.Visible;
     }
 
@@ -372,7 +454,7 @@ public partial class MainWindow
     {
         foreach (var pane in _panes)
         {
-            if (pane.Spec.Kind != RefKind.FollowSource) continue;
+            if (!pane.Markable) continue;
 
             UpdateMarkerVisual(pane);
             pane.Line?.BringIntoView();
@@ -397,15 +479,19 @@ public partial class MainWindow
     }
 
     /// <summary>栏底那句：字数/段数之后接"译到多少字"。没标过就原样返回。</summary>
+    /// <summary>
+    /// 底栏那句"译到 X/Y 字（Z%）"。
+    /// X、Y 都按"非空白字"数，跟栏底"字数"是同一个口径，免得一个 21 万一个 26 万。
+    /// </summary>
     private static string WithProgress(string note, int marker, string text)
     {
         if (marker < 0) return note;
 
-        string t = text.Replace("\r\n", "\n").Replace('\r', '\n');
-        int total = t.Length;
+        int total = TextStats.CountChars(text);
         if (total <= 0) return note;
 
-        int done = Math.Clamp(marker, 0, total);
+        int done = marker <= 0 ? 0 : TextStats.CountChars(text.Substring(0, Math.Min(marker, text.Length)));
+        done = Math.Clamp(done, 0, total);
         int pct = (int)Math.Round(done * 100.0 / total);
 
         return note + $" · 译到 {done:N0}/{total:N0} 字（{pct}%）";
@@ -415,20 +501,19 @@ public partial class MainWindow
 
     private void StepMarker(int delta)
     {
-        var pane = FirstFollowPane();
+        var pane = FirstMarkablePane();
         if (pane?.Body?.Document == null) return;
-        if (_store == null || _current == null) return;
 
         // 按"句子"走，不按"段落"走：原文常常一整章就是一大段，
         // 按段落跳一下就是半章，那不叫一句。
         string text = ResolvePaneContent(pane.Spec, out _, out _, out _);
         if (text.Length == 0) return;
 
-        int offset = CurrentOffset();
+        int offset = CurrentOffset(pane);
 
         if (offset < 0)
         {
-            SetMarker(0, scroll: true);   // 还没标过：先标到最前面
+            SetMarker(pane, 0, scroll: true);   // 还没标过：先标到最前面
             return;
         }
 
@@ -436,7 +521,7 @@ public partial class MainWindow
             ? NextSentence(text, offset)
             : PrevSentence(text, offset);
 
-        if (target >= 0 && target != offset) SetMarker(target, scroll: true);
+        if (target >= 0 && target != offset) SetMarker(pane, target, scroll: true);
     }
 
     /// <summary>句末标点。英文原文用 . ! ?，中文引文里可能出现全角。</summary>
@@ -482,10 +567,11 @@ public partial class MainWindow
         return 0;
     }
 
-    private PaneView? FirstFollowPane()
+    /// <summary>键盘跳句作用在第一栏能标的（"跟随当前章"那套已经废了，栏与栏之间没有主次）。</summary>
+    private PaneView? FirstMarkablePane()
     {
         foreach (var pane in _panes)
-            if (pane.Spec.Kind == RefKind.FollowSource) return pane;
+            if (pane.Markable) return pane;
 
         return null;
     }

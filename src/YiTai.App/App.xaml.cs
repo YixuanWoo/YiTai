@@ -22,6 +22,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        Diag.Start();   // 诊断日志：%LOCALAPPDATA%\YiTai\diag.log，YITAI_DIAG=0 可关
+
         var win = new MainWindow();
         MainWindow = win;
         win.Show();
@@ -39,5 +41,11 @@ public partial class App : Application
                 // 打不开就算了，主窗口已经在，用户可以自己选
             }
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        Diag.Stop();     // 退出前把最后半个窗口的数冲下去
+        base.OnExit(e);
     }
 }

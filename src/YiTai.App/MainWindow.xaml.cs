@@ -22,6 +22,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using YiTai.Core;
 
@@ -33,7 +34,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _autoSave = new();
 
     private ProjectStore? _store;
-    private SourceEntry? _current;
+    private TranslationEntry? _current;   // 当前打开的那篇译文（和源文件没有任何关系）
     private TranslationDoc? _doc;
 
     private bool _dirty;        // 有未保存的改动
@@ -59,7 +60,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                OpenProject(_settings.LastProjectRoot, _settings.LastSourceId);
+                OpenProject(_settings.LastProjectRoot, _settings.LastTranslationId);
             }
             catch
             {
@@ -128,16 +129,21 @@ public partial class MainWindow : Window
         OpenProject(root, null);
     }
 
-    /// <summary>装载一个项目：刷新标题、源文件下拉、默认选中上次那一份。</summary>
-    private void OpenProject(string rootOrProjectFile, string? wantSourceId)
+    /// <summary>装载一个项目：刷新标题、译文下拉、默认选中上次那一篇。</summary>
+    private void OpenProject(string rootOrProjectFile, string? wantTranslationId)
     {
         SavePaneLayout();   // 先把上一个项目的栏位记下来，再换
-        _current = null;    // 旧项目的章节不再算数，免得新项目还没装载时栏里显示上一本的字
+        _current = null;    // 旧项目的译文不再算数，免得新项目还没装载时栏里显示上一本的字
 
         _store = ProjectStore.Open(rootOrProjectFile);
         _settings.LastProjectRoot = _store.Root;
 
-        LoadProgress();   // 这个项目"译到哪了"，按源文件记着
+        LoadProgress();   // 这个项目"译到哪了"
+
+        // 译文清单以磁盘为准：translations\ 里的 md/txt 一律出现在下拉里，
+        // 不要求"先有源文件"，也不跟源文件一一对应。
+        _store.SyncTranslations();
+        _store.Save();
 
         Title = $"译台 — {_store.Meta.Name}";
         TxtProject.Text = _store.Meta.Name;
@@ -145,143 +151,209 @@ public partial class MainWindow : Window
 
         _loading = true;
         CmbSources.ItemsSource = null;
-        CmbSources.ItemsSource = _store.Meta.Sources;
+        CmbSources.ItemsSource = _store.Meta.Translations;
         CmbSources.DisplayMemberPath = "FileName";
         _loading = false;
 
         LoadPanesForProject();   // 这个项目上次摆了几栏，就摆几栏
 
-        bool hasSources = _store.Meta.Sources.Count > 0;
-        CmbSources.IsEnabled = hasSources;
-        TbxTranslation.IsEnabled = hasSources;
-        MiSave.IsEnabled = hasSources;
-        MiSaveAs.IsEnabled = hasSources;
+        bool hasTrans = _store.Meta.Translations.Count > 0;
+        CmbSources.IsEnabled = hasTrans;
+        MiSave.IsEnabled = hasTrans;
+        MiSaveAs.IsEnabled = hasTrans;
 
-        if (!hasSources)
+        if (!hasTrans)
         {
-            _current = null;
-            _doc = null;
-            SetPanesEmpty("这个项目还没有源文件。文件 → 导入源文件，选几个 md/txt 进来。");
+            ShowEmptyTranslation("这个项目还没有译文",
+                                 "不用先有原文 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。");
             return;
         }
 
-        string? id = wantSourceId ?? _store.Meta.LastSourceId;
-        SourceEntry entry = _store.Meta.Sources.Find(s => s.Id == id) ?? _store.Meta.Sources[0];
+        string? id = wantTranslationId ?? _store.Meta.LastTranslationId;
+        TranslationEntry entry = _store.Meta.Translations.Find(s => s.Id == id) ?? _store.Meta.Translations[0];
 
         _loading = true;
         CmbSources.SelectedItem = entry;
         _loading = false;
-        LoadSource(entry);
+        LoadTranslation(entry);
     }
 
-    // ================================================================ 导入
+    // ================================================================ 译文：新建 / 收进来 / 切换
+    //
+    // 这里只有"译文"，没有"原文"这一说。要参考什么东西，就开一栏资料（只读）。
+    // 一条文件是不是"译文"，不靠它放在哪、也不靠它跟谁同名 —— 靠人在这里点了"新建"或"收进来"。
 
-    private void OnImport(object sender, RoutedEventArgs e)
+    /// <summary>新建一篇译文。空项目里也能按 —— 不需要先有原文。</summary>
+    private void OnNewTranslation(object sender, RoutedEventArgs e)
     {
-        if (_store == null)
+        if (_store == null) { Warn("还没有项目", "先从「文件 → 新建项目 / 打开项目」开始。"); return; }
+        if (!SaveNow(quiet: false)) return;
+
+        string? name = AskName("新建译文", "给这篇译文起个名字（不用写 .md）：", "未命名");
+        if (name == null) return;
+
+        try
         {
-            Warn("还没有项目", "先“新建项目”或“打开项目”，再导入源文件。");
-            return;
+            var t = _store.NewTranslation(name);
+            BindTranslations(t);
+            LoadTranslation(t);
+            Status("已新建 " + t.FileName);
         }
+        catch (Exception ex) { Warn("新建失败", ex.Message); }
+    }
+
+    /// <summary>把一个已有的 md/txt 收进项目当译文（复制进 translations\，外面那份不动）。</summary>
+    private void OnImportTranslation(object sender, RoutedEventArgs e)
+    {
+        if (_store == null) { Warn("还没有项目", "先新建或打开一个项目。"); return; }
+        if (!SaveNow(quiet: false)) return;
 
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "导入源文件（会复制进项目的 sources 文件夹；可多选）",
+            Title = "选一份译文收进项目（会复制进 translations\\）",
             Filter = "文本 (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|所有文件 (*.*)|*.*",
-            Multiselect = true,
         };
         if (dlg.ShowDialog(this) != true) return;
 
         try
         {
-            var added = _store.ImportFiles(dlg.FileNames);
-            if (added.Count == 0) return;
-
-            // 刷新下拉（ItemsSource 是同一个 List 实例，重新赋值才会重绘）
-            _loading = true;
-            CmbSources.ItemsSource = null;
-            CmbSources.ItemsSource = _store.Meta.Sources;
-            CmbSources.IsEnabled = true;
-            TbxTranslation.IsEnabled = true;
-            MiSave.IsEnabled = true;
-            MiSaveAs.IsEnabled = true;
-            CmbSources.SelectedItem = added[0];
-            _loading = false;
-
-            LoadSource(added[0]);
-            RebuildPanes();   // 下拉里要出现刚导入的这几份
-            Status($"已导入 {added.Count} 个文件");
+            var t = _store.ImportTranslation(dlg.FileName);
+            BindTranslations(t);
+            LoadTranslation(t);
+            Status("已收进 " + t.FileName);
         }
-        catch (Exception ex)
-        {
-            Warn("导入失败", ex.Message);
-        }
+        catch (Exception ex) { Warn("收不进来", ex.Message); }
     }
 
-    // ================================================================ 关联已有译文
-
     /// <summary>
-    /// 迁移旧工作流用：源文件 ch01..ch27 + 旧译文 第01章..第27章，
-    /// 名字对不上但顺序一致，按顺序配对即可，不必一章章「另存为」。
+    /// 打开任何文件当一栏资料：只读、不复制、不进清单、不动译文栏。
+    /// 这里不判断"这是原文还是译文" —— 软件没资格判，你也可能放进来一份跟这本书无关的东西。
     /// </summary>
-    private void OnLinkTranslations(object sender, RoutedEventArgs e)
+    private void OnOpenRefFile(object sender, RoutedEventArgs e)
     {
-        if (_store == null) { Warn("还没有项目", "先新建或打开一个项目。"); return; }
-        if (_store.Meta.Sources.Count == 0) { Warn("还没有源文件", "先导入源文件，再来关联译文。"); return; }
-
-        var dlg = new Microsoft.Win32.OpenFolderDialog
+        var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "选放旧译文的文件夹（按章号与源文件配对，配不准的会跳过）",
+            Title = "打开一份资料（只读，不复制、不改项目）",
+            Filter = "所有文件 (*.*)|*.*|文本 (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|PDF (*.pdf)|*.pdf",
         };
         if (dlg.ShowDialog(this) != true) return;
 
-        (int n, List<int> skipped) = _store.LinkTranslationsByNumber(dlg.FolderName);
-
-        if (n == 0)
-        {
-            // 按章号配不上，退一步按顺序（仅当两边数量相等）
-            n = _store.LinkTranslationsByOrder(dlg.FolderName);
-            if (n == 0)
-            {
-                Warn("没能配对",
-                     $"源文件 {_store.Meta.Sources.Count} 份，但这个文件夹里没找到能对上的译文。\n" +
-                     "按章号对不上、数量也不相等，所以一份都没改。\n" +
-                     "可以先用「另存为」逐份指定。");
-                return;
-            }
-        }
-
-        string msg = $"已关联 {n} 份译文";
-        if (skipped.Count > 0)
-            msg += "；这些章号有多个候选，没替你猜：" + string.Join("、", skipped);
-        Status(msg);
-        if (_current != null) LoadSource(_current);
-        RebuildPanes();   // 译文指向变了，下拉里的「译文 · …」要跟着更新
+        AddRefPanes(new[] { dlg.FileName });
     }
 
-    // ================================================================ 切换源文件
+    /// <summary>下拉换成最新清单，并选中指定那一篇。</summary>
+    private void BindTranslations(TranslationEntry? select)
+    {
+        bool has = _store!.Meta.Translations.Count > 0;
+
+        _loading = true;
+        CmbSources.ItemsSource = null;
+        CmbSources.ItemsSource = _store.Meta.Translations;
+        CmbSources.DisplayMemberPath = "FileName";
+        CmbSources.SelectedItem = select;
+        _loading = false;
+
+        CmbSources.IsEnabled = has;
+        MiSave.IsEnabled = has;
+        MiSaveAs.IsEnabled = has;
+        EmptyTrans.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 要一个名字。自建一个小窗（一个输入框 + 确定/取消），
+    /// 不用系统那种 Win32 老输入框 —— 那个跟这个软件的皮完全不搭。
+    /// </summary>
+    private string? AskName(string title, string prompt, string initial)
+    {
+        var win = new Window
+        {
+            Title = title,
+            Width = 440,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize,
+            Background = (Brush)FindResource("BgCard"),
+            Foreground = (Brush)FindResource("TextMain"),
+            ShowInTaskbar = false,
+        };
+
+        var root = new StackPanel { Margin = new Thickness(18, 16, 18, 14) };
+        root.Children.Add(new TextBlock
+        {
+            Text = prompt,
+            FontSize = 12.5,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var box = new TextBox
+        {
+            Text = initial,
+            Margin = new Thickness(0, 10, 0, 0),
+            FontSize = 13,
+            Padding = new Thickness(6, 5, 6, 5),
+        };
+        root.Children.Add(box);
+
+        string? result = null;
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+        var ok = new Button
+        {
+            Content = "确定",
+            IsDefault = true,
+            MinWidth = 76,
+            Margin = new Thickness(0, 0, 8, 0),
+            Style = (Style)FindResource("BtnAccent"),
+        };
+        var cancel = new Button
+        {
+            Content = "取消",
+            IsCancel = true,
+            MinWidth = 76,
+            Style = (Style)FindResource("Btn"),
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+
+        ok.Click += (_, _) => { result = box.Text; win.Close(); };
+        win.Content = root;
+        win.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+
+        win.ShowDialog();
+        return result;
+    }
+
+    // ================================================================ 切换译文
 
     private void OnSourceChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loading) return;
-        if (CmbSources.SelectedItem is not SourceEntry entry) return;
+        if (CmbSources.SelectedItem is not TranslationEntry entry) return;
         if (_current != null && entry.Id == _current.Id) return;
 
-        // 切走之前先把上一份存掉（不然切一下就把刚写的丢了）
+        // 切走之前先把上一篇存掉（不然切一下就把刚写的丢了）
         if (!SaveNow(quiet: false)) return;
 
-        LoadSource(entry);
+        LoadTranslation(entry);
     }
 
     /// <summary>把一份源文件连同它的译文装进界面。</summary>
-    private void LoadSource(SourceEntry entry)
+    /// <summary>把一篇译文装进界面。它和源文件没有关系，只认 translations\ 里的那个文件。</summary>
+    private void LoadTranslation(TranslationEntry entry)
     {
         _current = entry;
-        _settings.LastSourceId = entry.Id;
-        _store!.Meta.LastSourceId = entry.Id;
+        _settings.LastTranslationId = entry.Id;
+        _store!.Meta.LastTranslationId = entry.Id;
         _store.Save();
 
-        string trPath = _store.TranslationPath(entry);
+        string trPath = _store.TranslationAbsPath(entry);
         _doc = TranslationStore.Load(trPath);
 
         _loading = true;
@@ -291,11 +363,38 @@ public partial class MainWindow : Window
         _dirty = false;
         _autoSave.Stop();
 
+        TbxTranslation.IsEnabled = true;
+        EmptyTrans.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = RelativeForDisplay(trPath);
-        RefreshPanes();   // 「跟随当前章」的那些对照栏跟着换
-        if (_previewing) RefreshPreview();   // 预览态下切章，画面也得跟着翻
+        RefreshPanes();   // 缩放之类的栏内状态刷一下（栏里放什么是不跟着译文变的）
+        if (_previewing) RefreshPreview();
         UpdateStat();
-        Status(_doc.Exists ? "已载入" : "译文文件还不存在，一开写就会建");
+        Status(_doc.Exists ? "已载入" : "文件还不存在，一开写就会建");
+    }
+
+    /// <summary>
+    /// 一篇译文都没有时，编辑区不是一块死灰：直接告诉人能做什么，并给一个能按的按钮。
+    /// </summary>
+    private void ShowEmptyTranslation(string title, string hint)
+    {
+        _current = null;
+        _doc = null;
+
+        _loading = true;
+        TbxTranslation.Text = "";
+        _loading = false;
+
+        _dirty = false;
+        _autoSave.Stop();
+
+        TbxTranslation.IsEnabled = false;
+        TxtTrPath.Text = "";
+        TxtEmptyTitle.Text = title;
+        TxtEmptyHint.Text = hint;
+        EmptyTrans.Visibility = Visibility.Visible;
+
+        UpdateStat();
+        Status("");
     }
 
     // ================================================================ 编辑 / 保存
@@ -329,7 +428,7 @@ public partial class MainWindow : Window
         if (_store == null || _current == null) return true;
         if (!_dirty) return true;
 
-        string path = _store.TranslationPath(_current);
+        string path = _store.TranslationAbsPath(_current);
 
         try
         {
@@ -399,36 +498,32 @@ public partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>
+    /// 给当前译文改名。改的就是磁盘文件名 —— 清单和文件永远只有一个名字，
+    /// 不会出现"清单里叫 A、文件夹里叫 B"这种对不上的状态。译文只能待在 translations\ 里。
+    /// </summary>
     private void OnSaveAs(object sender, RoutedEventArgs e)
     {
         if (_store == null || _current == null) return;
 
-        string suggest = _store.TranslationPath(_current);
-        var dlg = new Microsoft.Win32.SaveFileDialog
-        {
-            Title = "另存译文",
-            Filter = "Markdown (*.md)|*.md|所有文件 (*.*)|*.*",
-            FileName = Path.GetFileName(suggest),
-            InitialDirectory = Path.GetDirectoryName(suggest),
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        string stem = Path.GetFileNameWithoutExtension(_current.FileName);
+        string? name = AskName("给这篇译文改名", "新名字（不用写 .md）：", stem);
+        if (name == null) return;
+        if (string.Equals(name.Trim(), stem, StringComparison.OrdinalIgnoreCase)) return;
 
         try
         {
-            // 先当作"新文件"写出去，再把项目里的这条记录指过去
-            _doc = TranslationStore.Save(dlg.FileName, TbxTranslation.Text, null,
-                                         ProjectLayout.Backups(_store.Root), DateTime.Now);
-            _store.SetTranslationPath(_current, dlg.FileName);
-            _dirty = false;
+            if (!SaveNow(quiet: false)) return;
 
-            TxtTrPath.Text = RelativeForDisplay(dlg.FileName);
-            RefreshPanes();   // 有栏正看着这份译文的话，路径变了要重读
-            Status("已另存为 " + dlg.FileName);
-            TxtSaveState.Text = "已保存（另存）";
+            var renamed = _store.RenameTranslation(_current, name);
+            BindTranslations(renamed);
+            LoadTranslation(renamed);
+            Status("已改名为 " + renamed.FileName);
+            TxtSaveState.Text = "已保存";
         }
         catch (Exception ex)
         {
-            Warn("另存失败", ex.Message);
+            Warn("改名失败", ex.Message);
         }
     }
 
@@ -506,6 +601,13 @@ public partial class MainWindow : Window
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.N)
+        {
+            OnNewTranslation(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
             switch (e.Key)
@@ -560,26 +662,19 @@ public partial class MainWindow : Window
         Title = "译台";
         TxtProject.Text = "还没有打开项目";
         TxtProjectPath.Text = "文件 → 新建项目 / 打开项目";
-        CmbSources.IsEnabled = false;
-        TbxTranslation.IsEnabled = false;
-        MiSave.IsEnabled = false;
-        MiSaveAs.IsEnabled = false;
-        SetPanesEmpty("先从“文件 → 新建项目”开始：\n\n" +
-                      "选一个文件夹当项目根，软件会在里面建 sources（原文）、translations（译文）、backups（备份）。\n" +
-                      "然后“导入源文件”把要翻的文件复制进去，左边对照栏就显示原文，最右边写译文。");
-    }
-
-    private void SetPanesEmpty(string hint)
-    {
-        _ = hint;   // 提示语现在由对照栏自己按状态给出，见 RefreshPanes
 
         _loading = true;
-        TbxTranslation.Text = "";
+        CmbSources.ItemsSource = null;
         _loading = false;
 
-        TxtTrPath.Text = "";
-        TxtStat.Text = "";
-        TxtTrStat.Text = "";
+        CmbSources.IsEnabled = false;
+        MiSave.IsEnabled = false;
+        MiSaveAs.IsEnabled = false;
+
+        ShowEmptyTranslation("还没有项目",
+                             "先「文件 → 新建项目」，选一个文件夹当项目根。\n" +
+                             "建好之后这一栏就能直接写第一篇译文 —— 不用先找原文，也不用先建 .md。");
+
         RefreshPanes();
         if (_previewing) RefreshPreview();
     }
@@ -592,11 +687,13 @@ public partial class MainWindow : Window
         MessageBox.Show(this,
             "项目就是一个普通文件夹，双击里面的 project.json 就能打开。\n\n" +
             root + "\n" +
-            "  project.json    项目清单：有哪些源文件、译文在哪、上次打开的是哪一份\n" +
-            "  sources\\        导入时复制进来的原文（项目自足，整包可以搬走）\n" +
-            "  translations\\   译文，默认与原文同名；另存为改的是项目清单里的指向\n" +
+            "  project.json    项目清单：有哪些译文、各有几栏资料、上次打开的是哪一篇\n" +
+            "  translations\\   ★ 所有译文都只落在这里，一篇一个文件\n" +
+            "  sources\\        想归档的原稿/资料（可选，不归档也能翻译）\n" +
             "  backups\\        每天第一次保存前的上一版\n" +
             "  .yitai\\         程序自己用，别管它\n\n" +
+            "为什么译文必须统一在一个文件夹：这样「第几章」只是文件名，\n" +
+            "软件不用猜哪份是原文、哪份是译文 —— 你放进来当资料的一律只读。\n\n" +
             "为什么用文件夹而不是一个文件：译文得是能单独打开的 md，\n" +
             "能被别的编辑器、git、排版流程直接用；塞进一个二进制里就谁也读不了。",
             "项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
