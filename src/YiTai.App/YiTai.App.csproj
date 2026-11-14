@@ -24,12 +24,19 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe 文件、任务栏、资源管理器里显示的图标（T-6） -->
+    <ApplicationIcon>Assets\App.ico</ApplicationIcon>
     <!-- 单文件自包含发布时用不到，但本地 F5 调试时能少一堆告警 -->
     <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\YiTai.Core\YiTai.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 图标既是 exe 的窗口资源，也要能作为 WPF 资源给标题栏用 -->
+    <Resource Include="Assets\App.ico" />
   </ItemGroup>
 
   <ItemGroup>

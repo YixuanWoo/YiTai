@@ -51,9 +51,16 @@
   旧 `panes.json` 的 `"Kind"` 由 `System.Text.Json` 默认忽略未知键来兼容。
   验证：冒烟测试新增「旧 panes.json 的 Kind 被忽略、Path 照读」。
 
-- [ ] **T-6 补应用图标**
+- [x] **T-6 补应用图标（已完成）**
   `csproj` 目前没有 `ApplicationIcon`，exe、任务栏、资源管理器里都是空白默认图标。
   *验收*：`YiTai.exe` 有图标；窗口标题栏左上角有图标；多尺寸（16/32/48/256）。
+  *完成*：用代码画（Python + PIL 绘制、非生图模型）生成 `src\YiTai.App\Assets\App.ico`，
+  图形是"两份文稿 + 中间一根双向箭头"（对应"原文 ⇄ 译文"），配色沿用主题蓝 `#2563EB`，
+  内嵌 16 / 32 / 48 / 256 四档。
+  接入：`csproj` 加 `<ApplicationIcon>Assets\App.ico</ApplicationIcon>`（exe/任务栏/资源管理器），
+  并 `<Resource Include>` 供 WPF 使用；`MainWindow.xaml` 加 `Icon="Assets/App.ico"`（标题栏）。
+  验证：`System.Drawing.Icon.ExtractAssociatedIcon(YiTai.exe)` 提取到 32×32 图标；
+  发布版真窗口截图确认标题栏左上角出现该图标；build 0 警告 0 错误。
 
 - [ ] **T-7 补 `==高亮==` 的解析单测**
   目前只手工截图验证过。要覆盖：正常配对、未闭合原样保留、跨行不匹配、与 `**粗**` 嵌套时的当前行为（不解析内层）。
