@@ -429,8 +429,25 @@ public static class MdRender
 
         int cols = table.Aligns.Count;
         var t = new Table { CellSpacing = 0, Margin = new Thickness(0) };
+
+        // 按内容量每一列的自然宽度，写成**固定像素**列宽：
+        // 只有固定列宽，表格才不会为了适应栏宽把列压扁 —— 宽了就让外面的横向滚动条去滚。
+        // Auto 列宽在 FlowDocument 里一定是"缩到页宽"，滚动条永远不会出现。
+        var colW = new List<double>(cols);
         for (int c = 0; c < cols; c++)
-            t.Columns.Add(new TableColumn { Width = GridLength.Auto });
+        {
+            double widest = 0;
+            foreach (var row in table.Rows)
+            {
+                double w = MeasureWidth(CellText(row.Cells[c]), st);
+                if (w > widest) widest = w;
+            }
+
+            // 左右内边距 16 + 右边线 1 + 一点余量，免得差一像素就提前折行
+            double width = Math.Clamp(widest + 22, 44, st.FontSize * 40);
+            colW.Add(width);
+            t.Columns.Add(new TableColumn { Width = new GridLength(width) });
+        }
 
         var group = new TableRowGroup();
         for (int r = 0; r < table.Rows.Count; r++)
@@ -478,10 +495,11 @@ public static class MdRender
             BorderThickness = new Thickness(0),
         };
 
-        // 量一次自然宽度：栏够宽就按内容自然宽度，不够宽就让 viewer 出横向滚动条。
-        // 上限挡一下"一个单元格塞了上千字没断行"的极端情况，免得横向滚动条拖出天际。
-        viewer.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        double natural = Math.Min(viewer.DesiredSize.Width, 3000);
+        // 表格宽度 = 各列自然宽度之和。界面对它做两件事：
+        //   栏够宽 → 按比例把列放大到正好撑满（不出现滚动条）；
+        //   栏不够宽 → 列宽原样，页宽 > 视口，横向滚动条自己出来。
+        double natural = 0;
+        foreach (double w in colW) natural += w;
 
         var outer = new Border
         {
@@ -490,9 +508,36 @@ public static class MdRender
             Margin = new Thickness(0, st.FontSize * 0.4, 0, st.FontSize * 0.7),
             Child = viewer,
         };
-        outer.Tag = new TableHostInfo { Doc = inner, NaturalWidth = natural };
+        inner.PageWidth = natural > 0 ? natural : double.NaN;
+        outer.Tag = new TableHostInfo { Doc = inner, Table = t, Host = outer, ColWidths = colW, NaturalWidth = natural };
 
         return new BlockUIContainer(outer);
+    }
+
+    /// <summary>单元格里的纯文字（几截行内拼起来），只用来量列宽。</summary>
+    private static string CellText(MdTableCell cell)
+    {
+        if (cell.Inlines.Count == 0) return "";
+        var sb = new System.Text.StringBuilder();
+        foreach (var inl in cell.Inlines) sb.Append(inl.Text);
+        return sb.ToString();
+    }
+
+    /// <summary>这段文字在这套字体字号下有多宽。量列宽用；粗体比这里宽一点点，已留余量。</summary>
+    private static double MeasureWidth(string text, MdStyle st)
+    {
+        if (text.Length == 0) return 0;
+
+        var ft = new FormattedText(
+            text,
+            System.Globalization.CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            new Typeface(st.Body, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+            st.FontSize,
+            Brushes.Black,
+            1.0);
+
+        return ft.WidthIncludingTrailingWhitespace;
     }
 
     private static TextAlignment AlignmentOf(MdColumnAlign a) => a switch
@@ -502,10 +547,16 @@ public static class MdRender
         _ => TextAlignment.Left,
     };
 
-    /// <summary>表格宿主信息：内层文档 + 它按内容量出来的自然宽度。由界面在布局后决定最终页宽。</summary>
+    /// <summary>
+    /// 表格宿主信息：内层文档 / 表格本体 / 外层边框（拿它的实际宽度当"栏够不够宽"）/
+    /// 每列的自然宽度 / 所有列加起来多宽。由界面在布局后决定"撑满"还是"出滚动条"。
+    /// </summary>
     public sealed class TableHostInfo
     {
         public FlowDocument Doc = null!;
+        public Table Table = null!;
+        public FrameworkElement Host = null!;
+        public List<double> ColWidths = new();
         public double NaturalWidth;
     }
 

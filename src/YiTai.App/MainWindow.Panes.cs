@@ -1048,6 +1048,10 @@ public partial class MainWindow
         // 表格宿主：布局后要按"栏够不够宽"决定是撑满还是出横向滚动条
         pane.TableHosts = MdRender.ExtractTableHosts(pane.Body.Document);
 
+        // 宿主自己的宽度变了（窗口拉伸 / 栏宽改变 / 缩放），才是重算的正确时机
+        foreach (var info in pane.TableHosts)
+            info.Host.SizeChanged += (_, _) => UpdateTablePageWidths(pane);
+
         if (pane.Caption != null)
         {
             pane.BaseCaption = note;
@@ -1068,22 +1072,37 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 表格页宽：栏够宽就撑满，不够宽就按表格自然宽度，横向滚动条自己出来。
+    /// 表格页宽：栏够宽就按比例把列放大到正好撑满，不够宽就列宽原样、页宽等于列宽之和 ——
+    /// 这时页宽大于视口，表格正下方的横向滚动条自己出来。
     /// 只在换文档 / 改栏宽 / 缩放后调 —— 设 PageWidth 不会反向改栏宽，不会形成布局死循环。
     /// </summary>
     private void UpdateTablePageWidths(PaneView pane)
     {
-        if (pane.Body?.Document == null) return;
-
-        var doc = pane.Body.Document;
-        double avail = Math.Max(0,
-            pane.Body.ActualWidth - doc.PagePadding.Left - doc.PagePadding.Right - 2);
+        if (pane.Body == null) return;
 
         foreach (var info in pane.TableHosts)
         {
-            double w = Math.Max(info.NaturalWidth, avail);
-            if (Math.Abs(info.Doc.PageWidth - w) > 0.5)
-                info.Doc.PageWidth = w;
+            // 表格边框左右各 1px，真正的可用宽度是宿主实际宽度减掉这 2px
+            double avail = info.Host.ActualWidth - 2;
+            if (avail <= 0) continue;   // 还没排过版，等它自己的 SizeChanged
+
+            // 留 1px 余量，免得"撑满"时恰好等于视口宽度、又冒出一条 1px 的假滚动条
+            double target = Math.Max(1, avail - 1);
+            double scale = info.NaturalWidth > 0 && info.NaturalWidth <= target
+                ? target / info.NaturalWidth
+                : 1.0;
+
+            double sum = 0;
+            for (int i = 0; i < info.ColWidths.Count && i < info.Table.Columns.Count; i++)
+            {
+                double w = info.ColWidths[i] * scale;
+                if (Math.Abs(info.Table.Columns[i].Width.Value - w) > 0.5)
+                    info.Table.Columns[i].Width = new GridLength(w);
+                sum += w;
+            }
+
+            if (sum > 0 && Math.Abs(info.Doc.PageWidth - sum) > 0.5)
+                info.Doc.PageWidth = sum;
         }
     }
 
