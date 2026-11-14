@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using YiTai.Core;
 
 int passed = 0, failed = 0;
@@ -32,6 +33,21 @@ string NewSandbox()
     string dir = Path.Combine(Path.GetTempPath(), "yitai-tests-" + Guid.NewGuid().ToString("N").Substring(0, 8));
     Directory.CreateDirectory(dir);
     return dir;
+}
+
+// 行内解析的小帮手：数某类行内片段有几个、把所有片段拼回纯文字
+int CountKind(List<MdInline> list, MdInlineKind kind)
+{
+    int n = 0;
+    foreach (var x in list) if (x.Kind == kind) n++;
+    return n;
+}
+
+string Flat(List<MdInline> list)
+{
+    var sb = new StringBuilder();
+    foreach (var x in list) sb.Append(x.Text);
+    return sb.ToString();
 }
 
 // ============================================================ 1. 新建项目
@@ -248,6 +264,70 @@ using (var hold = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, 
 Check("文件被独占时返回 Locked 而不是抛异常", lockedOk);
 
 Check("空路径返回 InvalidPath", TextFile.Read("").State == TextReadState.InvalidPath);
+
+// ============================================================ 11. ==高亮== 的解析
+Console.WriteLine("\n== 11. ==高亮== 的解析 ==");
+
+MdInline? First(List<MdInline> list, MdInlineKind kind)
+{
+    foreach (var x in list) if (x.Kind == kind) return x;
+    return null;
+}
+
+// 11.1 正常配对：两对 == 被吃掉，中间那段成为 Highlight，位置指在文字上
+var hl = MdParser.ParseInlines("前 ==重点== 后");
+Check("正常配对：一处高亮", CountKind(hl, MdInlineKind.Highlight) == 1);
+Check("正常配对：内容是「重点」", First(hl, MdInlineKind.Highlight)?.Text == "重点");
+Check("正常配对：== 被吃掉，纯文字原样", Flat(hl) == "前 重点 后", Flat(hl));
+Check("正常配对：SourceOffset 落在文字上（=2 是那对 ==，=4 才是字）",
+      First(hl, MdInlineKind.Highlight)?.SourceOffset == 4,
+      First(hl, MdInlineKind.Highlight)?.SourceOffset.ToString());
+
+// 11.2 同一行两处高亮，各算各的
+var hl2 = MdParser.ParseInlines("==一== 和 ==二==");
+Check("同一行两处高亮", CountKind(hl2, MdInlineKind.Highlight) == 2);
+Check("两处内容各归各", Flat(hl2) == "一 和 二", Flat(hl2));
+
+// 11.3 未闭合：当普通文字收着，绝不吞掉 == 和后面的正文
+var open = MdParser.ParseInlines("这是 ==没闭合");
+Check("未闭合：不产生高亮", CountKind(open, MdInlineKind.Highlight) == 0);
+Check("未闭合：== 原样保留", Flat(open) == "这是 ==没闭合", Flat(open));
+
+// 11.4 跨行不配对：行内解析是一行一行来的，上一行开的 == 不会吃掉下一行
+var crossDoc = MdParser.Parse("第一行 == 开头\n第二行 结尾 ==\n");
+Check("跨行：并成一段", crossDoc.Blocks.Count == 1 && crossDoc.Blocks[0].Kind == MdBlockKind.Paragraph,
+      crossDoc.Blocks.Count.ToString());
+Check("跨行：不产生高亮", CountKind(crossDoc.Blocks[0].Inlines, MdInlineKind.Highlight) == 0);
+Check("跨行：两对 == 都原样留着", Flat(crossDoc.Blocks[0].Inlines) == "第一行 == 开头 第二行 结尾 ==",
+      Flat(crossDoc.Blocks[0].Inlines));
+
+// 11.5 与粗体嵌套：先认到谁，就只解析那一层（当前行为，不做内层二次解析）
+var nest1 = MdParser.ParseInlines("**==粗==**");
+Check("嵌套一 **==x==**：只有粗体", CountKind(nest1, MdInlineKind.Bold) == 1 && CountKind(nest1, MdInlineKind.Highlight) == 0);
+Check("嵌套一：高亮标记被当成粗体里的字", First(nest1, MdInlineKind.Bold)?.Text == "==粗==");
+
+var nest2 = MdParser.ParseInlines("==**粗**==");
+Check("嵌套二 ==**x**==：只有高亮", CountKind(nest2, MdInlineKind.Highlight) == 1 && CountKind(nest2, MdInlineKind.Bold) == 0);
+Check("嵌套二：粗体标记被当成高亮里的字", First(nest2, MdInlineKind.Highlight)?.Text == "**粗**");
+
+// 11.6 空标记 ====：里面一个字都没有，不当高亮（否则等于吃掉 4 个字符）
+var empty = MdParser.ParseInlines("====");
+Check("==== 不产生高亮", CountKind(empty, MdInlineKind.Highlight) == 0);
+Check("==== 原样保留", Flat(empty) == "====", Flat(empty));
+
+// 11.7 行内代码里的 == 不当高亮（代码优先）
+var codeHl = MdParser.ParseInlines("`==a==`");
+Check("代码里的 == 不解析成高亮",
+      CountKind(codeHl, MdInlineKind.Code) == 1 && CountKind(codeHl, MdInlineKind.Highlight) == 0);
+
+// 11.8 baseOffset：段落/引用里传进来的起点要叠加（绿线定位靠它）
+var off = MdParser.ParseInlines("==x==", 10);
+Check("baseOffset 叠加正确", First(off, MdInlineKind.Highlight)?.SourceOffset == 12,
+      First(off, MdInlineKind.Highlight)?.SourceOffset.ToString());
+
+// 11.9 转义：\== 就是两个普通等号，不配成高亮
+var esc = MdParser.ParseInlines("\\==");
+Check("转义后不当高亮", CountKind(esc, MdInlineKind.Highlight) == 0 && Flat(esc) == "==", Flat(esc));
 
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
