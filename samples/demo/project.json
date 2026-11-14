@@ -1,16 +1,13 @@
 {
   "Name": "灯塔（样例项目）",
-  "Schema": 1,
+  "Schema": 2,
   "CreatedUtc": "2026-11-10T16:45:14.510592Z",
-  "Sources": [
+  "Translations": [
     {
-      "Id": "demo1",
+      "Id": "acaf1ad2",
       "FileName": "ch01-灯塔.md",
-      "OriginPath": "",
-      "ImportedUtc": "2026-11-10T16:45:14.5142477Z",
-      "TranslationPath": "",
-      "Note": "自造样例，无版权问题"
+      "Note": ""
     }
   ],
-  "LastSourceId": "demo1"
+  "LastTranslationId": "acaf1ad2"
 }

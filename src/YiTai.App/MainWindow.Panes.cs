@@ -209,15 +209,20 @@ public partial class MainWindow
             if (File.Exists(abs) && !picked.Contains(abs)) picked.Add(abs);
         }
 
-        // ② sources 里其余的文本文件，按文件名（也就是章序）补
+        // ② sources\ 里其余的资料文件，按文件名（也就是章序）补
+        //    （清单里已经没有"源文件"这回事了，归档区是用户自己往里放的，直接看目录）
         var rest = new List<string>();
-        foreach (var s in _store.Meta.Sources)
+        string srcDir = ProjectLayout.Sources(_store.Root);
+        if (Directory.Exists(srcDir))
         {
-            string abs = Path.Combine(ProjectLayout.Sources(_store.Root), s.FileName);
-            if (!File.Exists(abs)) continue;
-            if (IsPdfPath(abs)) continue;
-            if (picked.Contains(abs)) continue;
-            rest.Add(abs);
+            foreach (string f in Directory.GetFiles(srcDir))
+            {
+                string ext = Path.GetExtension(f).ToLowerInvariant();
+                if (ext is not (".md" or ".markdown" or ".txt")) continue;
+                string abs = Path.GetFullPath(f);
+                if (picked.Contains(abs)) continue;
+                rest.Add(abs);
+            }
         }
 
         rest.Sort(StringComparer.OrdinalIgnoreCase);

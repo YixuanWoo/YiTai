@@ -9,10 +9,10 @@
 //
 //   <项目根>\
 //     project.json        项目元信息（唯一入口文件，双击/打开项目就是打开它）
-//     sources\            导入时复制进来的源文件（项目自足，整包可搬走）
-//     translations\       译文（默认与源文件同名，扩展名换成 .md）
+//     sources\            可选归档区：自己往里放的资料（程序只读，不登记）
+//     translations\       译文（一篇一个 .md，程序只写这里）
 //     backups\            每日首次保存前的备份
-//     .yitai\             程序自己用的东西（以后可能放索引缓存），不给人看
+//     .yitai\             程序自己用的东西（栏位摆法、进度线），不给人看
 //
 // 为什么译文放在项目里而不是"源文件旁边"：
 //   译文是项目的产物，源文件以后可能来自任何地方（另一台机器、别人的排版稿）。
@@ -59,7 +59,7 @@ public static class ProjectLayout
     ///
     /// ★ sources\ **不在这里建**：它是可选的归档区，从零开始写的项目根本用不到它。
     ///   预先塞一个空 sources\ 只会让人以为"我还没导入原文，是不是没弄好"。
-    ///   真正要往里面放文件的地方（导入资料）自己调 <see cref="EnsureSources"/>。
+    ///   真的有人往里放文件时（<see cref="EnsureSources"/>）才建。
     /// </summary>
     public static void EnsureCreated(string root)
     {
@@ -71,14 +71,6 @@ public static class ProjectLayout
 
     /// <summary>归档区：只在真的要往里放资料时才建。</summary>
     public static void EnsureSources(string root) => Directory.CreateDirectory(Sources(root));
-
-    /// <summary>默认译文路径：translations\&lt;源文件名去扩展名&gt;.md</summary>
-    public static string DefaultTranslationPath(string root, string sourceFileName)
-    {
-        string stem = Path.GetFileNameWithoutExtension(sourceFileName);
-        if (stem.Length == 0) stem = "未命名";
-        return Path.Combine(Translations(root), stem + ".md");
-    }
 
     /// <summary>把绝对路径转成相对项目根的路径（存进 project.json 用）。</summary>
     public static string ToRelative(string root, string absolute)

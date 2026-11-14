@@ -72,30 +72,30 @@ bool refused = false;
 try { ProjectStore.CreateNew(root, "重复"); } catch (InvalidOperationException) { refused = true; }
 Check("同一文件夹不能建第二个项目", refused);
 
-// ============================================================ 2. 导入源文件
-Console.WriteLine("\n== 2. 导入源文件 ==");
+// ============================================================ 2. 收已有稿当译文
+Console.WriteLine("\n== 2. 收已有稿当译文 ==");
 string src1 = Path.Combine(box, "ch01.md");
 string body = "# Chapter 1\n\nOnce when I was six years old I saw a magnificent picture.\n\nIt was a picture of a boa constrictor.\n";
 File.WriteAllText(src1, body);
 
-var added = store.ImportFiles(new[] { src1 });
-Check("导入返回一条记录", added.Count == 1, added.Count.ToString());
-Check("文件复制进了 sources", File.Exists(ProjectLayout.Sources(root) + "\\ch01.md"));
+var added = store.ImportTranslation(src1);
+Check("收进来后返回一条译文记录", !string.IsNullOrEmpty(added.FileName), added.FileName);
+Check("文件复制进了 translations", File.Exists(ProjectLayout.Translations(root) + "\\ch01.md"));
 Check("源文件还在原地（是复制不是搬走）", File.Exists(src1));
-Check("清单里登记了", store.Meta.Sources.Count == 1);
+Check("清单里登记了", store.Meta.Translations.Count == 1);
 
-string tr = store.TranslationPath(store.Meta.Sources[0]);
-Check("译文默认落在 translations\\ch01.md", tr.EndsWith(@"translations\ch01.md"), tr);
-Check("空译文已建好（标题行）", File.Exists(tr) && File.ReadAllText(tr).Trim() == "ch01", File.Exists(tr) ? File.ReadAllText(tr) : "不存在");
+string tr = store.TranslationAbsPath(added);
+Check("译文就落在 translations\\ch01.md", tr.EndsWith(@"translations\ch01.md"), tr);
+Check("内容原样复制的", File.ReadAllText(tr) == body);
 
-// 同名再导入：不能盖掉已有副本
-var again = store.ImportFiles(new[] { src1 });
-Check("同名导入不覆盖", again.Count == 1 && again[0].FileName == "ch01 (2).md", again.Count > 0 ? again[0].FileName : "无");
-Check("清单里变成两条", store.Meta.Sources.Count == 2);
+// 同名再收一次：不能盖掉已有那份
+var again = store.ImportTranslation(src1);
+Check("同名不覆盖，改叫 ch01 (2).md", again.FileName == "ch01 (2).md", again.FileName);
+Check("清单里变成两条", store.Meta.Translations.Count == 2);
 
 // ============================================================ 3. 译文保存
 Console.WriteLine("\n== 3. 译文保存 ==");
-string tr1 = store.TranslationPath(store.Meta.Sources[0]);
+string tr1 = store.TranslationAbsPath(added);
 File.WriteAllText(tr1, "第一章\r\n\r\n我六岁那年看到一张了不起的画。\r\n");   // 故意写成 CRLF，验证"照原样还回去"
 var doc = TranslationStore.Load(tr1);
 Check("读到的换行是 CRLF", doc.Eol == "\r\n", doc.Eol == "\n" ? "LF" : doc.Eol);
@@ -134,38 +134,43 @@ Check("备份目录里出现了今天的备份",
       Directory.GetFiles(ProjectLayout.Backups(root)).Length > 0,
       Directory.GetFiles(ProjectLayout.Backups(root)).Length.ToString());
 
-// ============================================================ 5. 另存为
-Console.WriteLine("\n== 5. 另存为 ==");
-string tr2 = Path.Combine(ProjectLayout.Translations(root), "第01章-初稿.md");
-TranslationStore.Save(tr2, "第一章\n\n另存的版本。\n", null, ProjectLayout.Backups(root), DateTime.Now);
-store.SetTranslationPath(store.Meta.Sources[0], tr2);
+// ============================================================ 5. 改译文名
+Console.WriteLine("\n== 5. 改译文名 ==");
+var renamed = store.RenameTranslation(added, "第01章-初稿");
+Check("改完文件名跟着改", renamed.FileName == "第01章-初稿.md", renamed.FileName);
+Check("磁盘上真改了", File.Exists(Path.Combine(ProjectLayout.Translations(root), "第01章-初稿.md")));
+Check("老文件名不再存在", !File.Exists(Path.Combine(ProjectLayout.Translations(root), "ch01.md")));
 
 var reopened = ProjectStore.Open(root);
-string reTr = reopened.TranslationPath(reopened.Meta.Sources[0]);
-Check("重开项目后译文指向新位置", reTr.EndsWith("第01章-初稿.md"), reTr);
-Check("另存文件存在", File.Exists(reTr));
+TranslationEntry reEntry = reopened.Meta.Translations[0];
+foreach (var t in reopened.Meta.Translations)
+    if (t.FileName == "第01章-初稿.md") reEntry = t;
+Check("重开项目后译文还在清单里", reEntry.FileName == "第01章-初稿.md", reEntry.FileName);
+Check("重开后能定位到文件", File.Exists(reopened.TranslationAbsPath(reEntry)));
 
-// ============================================================ 6. 关联旧译文（按顺序配对）
-Console.WriteLine("\n== 6. 关联旧译文 ==");
-string oldTrDir = Path.Combine(box, "旧译文");
-Directory.CreateDirectory(oldTrDir);
-File.WriteAllText(Path.Combine(oldTrDir, "第01章.md"), "第一章\n\n旧稿。\n");
-File.WriteAllText(Path.Combine(oldTrDir, "第02章.md"), "第二章\n\n旧稿。\n");
-File.Delete(ProjectLayout.Translations(reopened.Root) + @"\第01章-初稿.md");   // 先把另存那份移开，凑成 2 对 2
-int paired = reopened.LinkTranslationsByOrder(oldTrDir);
-Check("两份源文件配到两份旧译文", paired == 2, paired.ToString());
-Check("配对结果指向旧译文（两份不同）",
-      reopened.TranslationPath(reopened.Meta.Sources[0]).EndsWith("章.md") &&
-      reopened.TranslationPath(reopened.Meta.Sources[1]).EndsWith("章.md") &&
-      reopened.TranslationPath(reopened.Meta.Sources[1]) != reopened.TranslationPath(reopened.Meta.Sources[0]),
-      reopened.TranslationPath(reopened.Meta.Sources[0]));
+// ============================================================ 6. 新建译文 / 外部新增 / 自然排序
+Console.WriteLine("\n== 6. 新建译文 / 外部新增 / 自然排序 ==");
+var fresh = reopened.NewTranslation("第二章");
+Check("新建的译文落地了", File.Exists(reopened.TranslationAbsPath(fresh)), fresh.FileName);
+Check("空译文就是空文件", File.ReadAllText(reopened.TranslationAbsPath(fresh)).Length == 0);
 
-// 数量不等时必须一份都不动
-string mism = Path.Combine(box, "数量不符");
-Directory.CreateDirectory(mism);
-File.WriteAllText(Path.Combine(mism, "只有一份.md"), "x\n");
-int notPaired = reopened.LinkTranslationsByOrder(mism);
-Check("数量不等时拒绝配对", notPaired == 0, notPaired.ToString());
+var dup = reopened.NewTranslation("第二章");
+Check("同名的自动加 (2)", dup.FileName == "第二章 (2).md", dup.FileName);
+
+// 用户在外面用别的编辑器新建了一篇，SyncTranslations 要能收进来
+File.WriteAllText(Path.Combine(ProjectLayout.Translations(reopened.Root), "第10章.md"), "十\n");
+File.WriteAllText(Path.Combine(ProjectLayout.Translations(reopened.Root), "第2章.md"), "二\n");
+var synced = reopened.SyncTranslations();
+Check("外部新增的文件被收进清单", synced.Exists(t => t.FileName == "第10章.md"));
+
+// 自然序：第2章 要排在 第10章 前面（纯字典序会反过来）
+int idx2 = -1, idx10 = -1;
+for (int k = 0; k < synced.Count; k++)
+{
+    if (synced[k].FileName == "第2章.md") idx2 = k;
+    if (synced[k].FileName == "第10章.md") idx10 = k;
+}
+Check("自然序：第2章 在前、第10章 在后", idx2 >= 0 && idx10 >= 0 && idx2 < idx10, idx2 + "/" + idx10);
 
 // ============================================================ 7. 设置
 Console.WriteLine("\n== 7. 设置 ==");
@@ -182,37 +187,55 @@ var stLegacy = AppSettings.Load();
 Check("旧 settings.json 多出 LastSourceId 也照读",
       stLegacy.LastProjectRoot == root && stLegacy.AutoSaveDelayMs == 1500, stLegacy.LastProjectRoot);
 
-// ============================================================ 9. 按章号配对（真实目录里的坑）
-Console.WriteLine("\n== 9. 按章号配对 ==");
-string nb = Path.Combine(box, "章号配对");
-Directory.CreateDirectory(nb);
-var s3 = ProjectStore.CreateNew(Path.Combine(nb, "proj"), "章号配对");
+// ============================================================ 9. 旧项目兼容（T-9 / T-10）
+Console.WriteLine("\n== 9. 旧项目兼容（T-9 / T-10）==");
 
-// 造三份源文件与译文：02 章有个"二校建议"附件，03 章有两个分不出主次的候选
-foreach (var (name, text) in new[] { ("ch01.md", "one"), ("ch02.md", "two"), ("ch03.md", "three") })
-    File.WriteAllText(Path.Combine(nb, name), text);
-s3.ImportFiles(new[] { Path.Combine(nb, "ch01.md"), Path.Combine(nb, "ch02.md"), Path.Combine(nb, "ch03.md") });
+// 造一份"旧模型"的 project.json：带 Sources 清单、每个源文件带 TranslationPath、带 LastSourceId
+string legacy = Path.Combine(box, "legacy");
+Directory.CreateDirectory(legacy);
+string legacyJson =
+    "{\n" +
+    "  \"Name\": \"旧项目\",\n" +
+    "  \"Schema\": 1,\n" +
+    "  \"Sources\": [\n" +
+    "    { \"Id\": \"abc\", \"FileName\": \"ch01.md\", \"OriginPath\": \"C:\\\\旧\\\\ch01.md\"," +
+    " \"ImportedUtc\": \"2026-01-01T00:00:00Z\", \"TranslationPath\": \"translations\\\\第01章.md\", \"Note\": \"\" }\n" +
+    "  ],\n" +
+    "  \"Translations\": [ { \"Id\": \"t1\", \"FileName\": \"第01章.md\", \"Note\": \"\" } ],\n" +
+    "  \"LastTranslationId\": \"t1\",\n" +
+    "  \"LastSourceId\": \"abc\"\n" +
+    "}";
+File.WriteAllText(ProjectLayout.ProjectFile(legacy), legacyJson);
+Directory.CreateDirectory(ProjectLayout.Translations(legacy));
+File.WriteAllText(Path.Combine(ProjectLayout.Translations(legacy), "第01章.md"), "第一章\n");
 
-string trDirReal = Path.Combine(nb, "旧译文");
-Directory.CreateDirectory(trDirReal);
-File.WriteAllText(Path.Combine(trDirReal, "第01章.md"), "一\n");
-File.WriteAllText(Path.Combine(trDirReal, "第02章.md"), "二\n");
-File.WriteAllText(Path.Combine(trDirReal, "第02章-二校建议.md"), "二校\n");
-File.WriteAllText(Path.Combine(trDirReal, "第03章-甲.md"), "三甲\n");
-File.WriteAllText(Path.Combine(trDirReal, "第03章-乙.md"), "三乙\n");
+bool openedOk = true;
+ProjectStore? legacyStore = null;
+try { legacyStore = ProjectStore.Open(legacy); }
+catch (Exception) { openedOk = false; }
+Check("旧 project.json 照常打开，不报错", openedOk);
+Check("旧文件里的译文清单一篇不少", legacyStore is not null && legacyStore.Meta.Translations.Count == 1,
+      legacyStore?.Meta.Translations.Count.ToString());
 
-var (linked, skipped) = s3.LinkTranslationsByNumber(trDirReal);
-Check("02 章的附件不抢位（挑干净的 第02章.md）", linked == 2, "linked=" + linked);
-Check("03 章两个候选分不出 → 跳过不猜", skipped.Count == 1 && skipped[0] == 3, string.Join(",", skipped));
+// 存一次：旧字段必须从文件里消失
+legacyStore!.Save();
+string afterSave = File.ReadAllText(ProjectLayout.ProjectFile(legacy));
+Check("保存后不再写 Sources", !afterSave.Contains("\"Sources\""));
+Check("保存后不再写 TranslationPath", !afterSave.Contains("TranslationPath"));
+Check("保存后不再写 LastSourceId", !afterSave.Contains("LastSourceId"));
+Check("保存后 Schema 升到 2", afterSave.Contains("\"Schema\": 2"));
+
+// 新写的 project.json 一开始就不该带这些键
+string newProj = File.ReadAllText(ProjectLayout.ProjectFile(root));
+Check("新项目的 project.json 里没有 Sources", !newProj.Contains("\"Sources\""));
+Check("新项目的 project.json 里没有 TranslationPath", !newProj.Contains("TranslationPath"));
 
 
 Console.WriteLine("\n== 8. 项目自带内容 ==");
-// 每个导入的源文件都自带一份空译文（ch01.md、ch01 (2).md），另存为又多一份
-Check("sources 里两份", Directory.GetFiles(ProjectLayout.Sources(root)).Length == 2,
-      Directory.GetFiles(ProjectLayout.Sources(root)).Length.ToString());
-Check("translations 里两份（另存那份已移开）",
-      Directory.GetFiles(ProjectLayout.Translations(root)).Length == 2,
+// translations 里此时应有 6 份：第01章-初稿.md、ch01 (2).md、第二章.md、第二章 (2).md、第2章.md、第10章.md
+Check("translations 里六份", Directory.GetFiles(ProjectLayout.Translations(root)).Length == 6,
       Directory.GetFiles(ProjectLayout.Translations(root)).Length.ToString());
+Check("sources 目录没被建出来（没人往里放归档）", !Directory.Exists(ProjectLayout.Sources(root)));
 
 // ============================================================ 10. 归档按需建 / 栏位折叠 / 文件读不了
 Console.WriteLine("\n== 10. 归档按需建 / 栏位折叠 / 文件读不了 ==");
@@ -222,10 +245,13 @@ string t4 = Path.Combine(box, "t4");
 var s4 = ProjectStore.CreateNew(t4, "t4");
 Check("新项目不预建 sources\\", !Directory.Exists(ProjectLayout.Sources(t4)));
 
+// T-4：sources\ 是可选归档区，没人往里放东西就永远不建
 string t4src = Path.Combine(box, "t4-src.md");
 File.WriteAllText(t4src, "一个字\n");
-s4.ImportFiles(new[] { t4src });
-Check("导入时 sources\\ 按需建出来且文件放进去",
+Check("没人归档时 sources\\ 一直不存在", !Directory.Exists(ProjectLayout.Sources(t4)));
+ProjectLayout.EnsureSources(t4);
+File.Copy(t4src, Path.Combine(ProjectLayout.Sources(t4), "t4-src.md"));
+Check("真往里放东西时 sources\\ 才建出来",
       File.Exists(Path.Combine(ProjectLayout.Sources(t4), "t4-src.md")));
 
 // T-5：老 panes.json 带着已删除的 "Kind"，读的时候必须忽略，其余字段照旧

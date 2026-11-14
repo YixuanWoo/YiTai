@@ -93,14 +93,36 @@
 
 ## 第二批：动数据模型（先备份 .yitai 与 project.json）
 
-- [ ] **T-9 重写旧链路 + 17 项废测试**
+- [x] **T-9 重写旧链路 + 17 项废测试（已完成，与 T-10 一起做）**
   `ProjectStore` 里"源文件 → 译文"的整条旧链路（约 204 行）连同对应测试一起删改。
   **必须同时动**，否则编译不过。
   *验收*：`project.json` 只剩"译文清单 + 栏位"；34 项测试重写为测真实链路；全过。
+  *完成*：
+  ① `ProjectStore` 删掉 `SourcePath` / `TranslationPath` / `SetTranslationPath` /
+  `HasSourceFile` / `ImportFiles` / `RemoveEntry` / `LinkTranslationsByNumber` /
+  `ChapterNumber` / `LinkTranslationsByOrder` / `SetTranslationPathRaw`（约 204 行），
+  只留译文那条链路（`SyncTranslations` / `NewTranslation` / `ImportTranslation` / `RenameTranslation`）。
+  ② `ProjectMeta` 删掉 `Sources` / `LastSourceId` 与 `SourceEntry` 整个类；`Schema` 升到 2，
+  旧文件打开时自动升版（`Open` 里 `if (Schema < 2) Schema = 2`）。
+  ③ `ProjectLayout` 删掉 `DefaultTranslationPath`（只服务旧模型）；`sources\` 改成
+  "用户自己往里放的可选归档区"，`EnsureCreated` 仍不预建它。
+  ④ UI：`FillPanesFromProject` 的"按章序补栏"从读 `Meta.Sources` 改成直接枚举
+  `sources\` 目录里的 `.md/.txt` —— 清单里已经没有源文件这回事，但旧项目归档区里的文件照样能摆出来。
+  ⑤ 测试：删掉测旧链路的 17 项（导入源文件、另存为改路径、按顺序/按章号配对、sources 计数等），
+  换成测真实链路的 12 项（收稿进 translations、同名不覆盖、改名、新建译文去重、
+  外部新增被 Sync 收进、自然序、旧项目兼容、保存后旧字段消失、Schema 升 2）。
+  验证：build 0 警告 0 错误；冒烟测试 **63 → 75 项全过**；Debug 版真窗口打开 `samples\demo`
+  正常（栏目、行号、字数都对）；`samples\demo\project.json` 现场被迁移成 Schema 2 的干净版本。
 
-- [ ] **T-10 `SourceEntry.TranslationPath` 降级或删除**
+- [x] **T-10 `SourceEntry.TranslationPath` 降级或删除（已完成，并入 T-9）**
   这个字段本身就在说"每份源文件有一份译文"。若仍需兼容旧项目，改成只读兼容（读到就忽略）。
   *验收*：新写出的 `project.json` 不再含该字段；旧项目打开不报错。
+  *完成*：`SourceEntry` 整个类删掉，字段无从存在；旧 `project.json` 里的 `Sources` /
+  `TranslationPath` / `LastSourceId` 由 `System.Text.Json` 当未知键忽略，打开不报错、不丢译文清单，
+  存一次就永久消失（测试里用一份手写的旧清单逐项断言：`Sources` / `TranslationPath` /
+  `LastSourceId` 都不再出现，`Schema` 变 2）。
+  数据安全：动手前已把真实项目 `D:\Benny\20_项目\小王子翻译\08-译台工程`
+  整目录备份到 `08-译台工程-备份-20261114`（62 个文件）。
 
 - [ ] **T-11 进度键从"纯文件名"改绝对路径**
   同名文件在两个目录下会互相覆盖进度。
