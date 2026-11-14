@@ -153,10 +153,18 @@ Check("数量不等时拒绝配对", notPaired == 0, notPaired.ToString());
 
 // ============================================================ 7. 设置
 Console.WriteLine("\n== 7. 设置 ==");
-var st = new AppSettings { LastProjectRoot = root, LastSourceId = "abc", AutoSaveDelayMs = 1500 };
+var st = new AppSettings { LastProjectRoot = root, AutoSaveDelayMs = 1500 };
 st.Save();
 var st2 = AppSettings.Load();
 Check("设置回读正确", st2.LastProjectRoot == root && st2.AutoSaveDelayMs == 1500, st2.LastProjectRoot);
+
+// 老版本的 settings.json 里还有 "LastSourceId"（旧模型"上次选中的源文件"）。
+// 字段删掉之后，这种旧文件必须照读不误 —— 不能因为多了个不认识的键就打不开设置。
+File.WriteAllText(AppSettings.DefaultPath,
+    "{\n  \"LastProjectRoot\": \"" + root.Replace("\\", "\\\\") + "\",\n  \"LastSourceId\": \"abc\",\n  \"AutoSaveDelayMs\": 1500\n}");
+var stLegacy = AppSettings.Load();
+Check("旧 settings.json 多出 LastSourceId 也照读",
+      stLegacy.LastProjectRoot == root && stLegacy.AutoSaveDelayMs == 1500, stLegacy.LastProjectRoot);
 
 // ============================================================ 9. 按章号配对（真实目录里的坑）
 Console.WriteLine("\n== 9. 按章号配对 ==");

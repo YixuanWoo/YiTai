@@ -19,9 +19,6 @@ public sealed class AppSettings
     /// <summary>上次打开的项目根目录（下次启动直接进它）。空 = 没有。</summary>
     public string LastProjectRoot { get; set; } = "";
 
-    /// <summary>上次选中的源文件 Id。</summary>
-    public string LastSourceId { get; set; } = "";
-
     /// <summary>上次选中的译文 Id（译文是独立文档，不再挂在源文件上）。</summary>
     public string LastTranslationId { get; set; } = "";
 

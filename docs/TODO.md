@@ -22,13 +22,18 @@
   验证：`python` 逐文件计数 `原文` = 0；`dotnet build` 0 警告 0 错误；冒烟测试 34 项全过。只动文字，未做截图验收。
   说明：本清单自身保留"原文"二字，它是在描述这件事，不算残留。
 
-- [ ] **T-2 删 `TextStats.ChineseNumber`**
-  Core 内零引用（只有外部一次性迁移脚本用过）。1..99 的中文数字转换不属于翻译工具的核心职责。
-  *验收*：删除后编译通过；`git grep ChineseNumber` 为 0。
+- [x] **T-2 删 `TextStats.ChineseNumber`（已完成）**
+  它是第一版"程序自动生成'第N章'标题"的遗留（`f7fe24f` 里由 `ChapterTitle` 调用，还带 4 条测试），
+  `8bcb3a4` 改成"项目=文件夹、名字由用户起"之后就没有任何调用方了。
+  *验收*：删除后编译通过；`src / tests` 里 `ChineseNumber` 计数为 0（本清单自身在描述这件事，不算残留）。
+  *完成*：`src` + `tests` 计数 0；build 0 警告 0 错误；冒烟测试全过。
 
-- [ ] **T-3 去掉重复的 `LastSourceId`**
-  `AppSettings.LastSourceId` 与 `ProjectMeta.LastSourceId` 语义重叠，界面只认后者。
-  *验收*：旧 `settings.json` 缺该字段可正常启动；`AppSettings` 只剩窗口尺寸 / 自动保存间隔 / 上次项目根。
+- [x] **T-3 去掉重复的 `LastSourceId`（已完成）**
+  `AppSettings.LastSourceId` 与 `ProjectMeta.LastSourceId` 语义重叠，界面只认后者，前者从来没被读过。
+  *验收*（原写法有误，改正）：旧 `settings.json` 里**仍带** `LastSourceId` 字段也能正常读回；
+  `AppSettings` 只剩窗口尺寸 / 自动保存间隔 / 上次项目根 / 上次译文 / 最近资料 / 栏位记忆。
+  *完成*：删掉 `AppSettings.LastSourceId`；冒烟测试新增一项"旧 settings.json 多出 LastSourceId 也照读"
+  （`System.Text.Json` 默认忽略不认识的键）。验证：build 0 警告 0 错误，测试 34 → 35 项全过。
 
 - [ ] **T-4 `ProjectLayout.EnsureCreated` 不再强建 `sources\`**
   归档目录是可选的，建它只是在暗示"必须先有原文"。
