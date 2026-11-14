@@ -87,7 +87,7 @@
   并说明为什么这么取舍（保所见即所存、撤销、中文输入法与复制出去的内容）。
   ③ PDF / WebView2 运行时：README 原有「PDF 按原件显示」那一条已写明"WebView2 Runtime 随 Edge 安装，
   万一没有就去装 Microsoft Edge WebView2 Runtime"，本次未重复，避免同一件事写两遍。
-  验证：改动仅文字；`docs/TODO.md` 无 `&#x20;` 痕迹、列表与加粗完好。
+  验证：改动仅文字；`docs/TODO.md` 无 HTML 实体痕迹、列表与加粗完好。
 
 ---
 
