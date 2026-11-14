@@ -540,7 +540,7 @@ public partial class MainWindow
 
         // 按"句子"走，不按"段落"走：一份资料常常一整章就是一大段，
         // 按段落跳一下就是半章，那不叫一句。
-        string text = ResolvePaneContent(pane.Spec, out _, out _, out _);
+        string text = ResolvePaneContent(pane.Spec, out _, out _, out _, out _);
         if (text.Length == 0) return;
 
         int offset = CurrentOffset(pane);

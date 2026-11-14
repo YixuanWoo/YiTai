@@ -102,6 +102,12 @@ public partial class MainWindow
         public Button ZoomLabel = null!;
 
         public ComboBox Choice = null!;
+
+        /// <summary>栏头的"文件不在了"提示条。PDF 栏与文本栏都有它（PDF 分支建栏时就插在标题条下面）。</summary>
+        public Border? MissingBar;
+
+        /// <summary>提示条里的那句话（文件路径 + 为什么读不了）。</summary>
+        public TextBlock? MissingText;
     }
 
     /// <summary>下拉里的一项：显示名 + 它对应的选择。</summary>
@@ -121,7 +127,7 @@ public partial class MainWindow
     private void InitPanes()
     {
         _panes.Clear();
-        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
+        _panes.Add(NewPane(new RefDocSpec()));
         RebuildPanes();
     }
 
@@ -177,7 +183,7 @@ public partial class MainWindow
             FillPanesFromProject();
 
         if (_panes.Count == 0)
-            _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
+            _panes.Add(NewPane(new RefDocSpec()));
 
         RebuildPanes();
 
@@ -226,7 +232,6 @@ public partial class MainWindow
             if (_panes.Count >= want) break;
             _panes.Add(NewPane(new RefDocSpec
             {
-                Kind = RefKind.External,
                 Path = Path.GetFullPath(abs),
                 Label = Path.GetFileName(abs),
                 Zoom = 1.0,
@@ -263,7 +268,6 @@ public partial class MainWindow
     private RefDocSpec NormalizeSpec(RefDocSpec s)
     {
         var spec = CloneSpec(s);
-        spec.Kind = RefKind.External;
 
         if (spec.Path.Length == 0) return spec;
 
@@ -281,7 +285,13 @@ public partial class MainWindow
             return spec;
         }
 
-        spec.Path = "";   // 找不到就空着，别指着一个不存在的路径
+        // ★ 找不到 ≠ 这一栏空着。
+        //   以前这里清空 Path，结果"文件被移走/删了"在界面上退化成"这一栏还空着"，
+        //   用户以为是自己没放东西。改成留路径、不清空：这一栏能说出"文件不在了，
+        //   你重新指一下，或者关掉这一栏"，进度也还认得它原来的名字。
+        spec.Path = Path.IsPathRooted(spec.Path)
+            ? spec.Path
+            : Path.GetFullPath(abs);
         return spec;
     }
 
@@ -496,6 +506,48 @@ public partial class MainWindow
         DockPanel.SetDock(head, Dock.Top);
         dock.Children.Add(head);
 
+        // ---------------------------------------------------------- 文件不在了：栏内提示条
+        // 不弹窗、不占屏幕：就在标题条下面一行说清楚，并给出"重新指定 / 移除这一栏"两条路。
+        // 为什么放在这里而不是画进正文：正文是 RichTextBox 里的 FlowDocument，
+        // 提示条要是混进去，就变成"文件内容"的一部分，选中、复制、进度线都会带上它。
+        var missText = new TextBlock
+        {
+            FontSize = 11.5,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Brush)FindResource("Warn"),
+        };
+
+        var missTools = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        missTools.Children.Add(MiniButton("重新指定…", "告诉我这个文件现在在哪", () => RelocatePane(index)));
+        missTools.Children.Add(MiniButton("移除这一栏", "关掉这一栏", () => RemovePane(index)));
+
+        DockPanel.SetDock(missTools, Dock.Right);
+
+        var missDock = new DockPanel();
+        missDock.Children.Add(missTools);
+        missDock.Children.Add(missText);
+
+        var missBar = new Border
+        {
+            Background = (Brush)FindResource("BgCardAlt"),
+            BorderBrush = (Brush)FindResource("Warn"),
+            BorderThickness = new Thickness(0, 0, 0, 2),   // 一条橙色下划线，够看见又不刺眼
+            Padding = new Thickness(10, 7, 8, 7),
+            Visibility = Visibility.Collapsed,
+            Child = missDock,
+        };
+        DockPanel.SetDock(missBar, Dock.Top);
+        dock.Children.Add(missBar);
+
+        pane.MissingBar = missBar;
+        pane.MissingText = missText;
+
         // ---------------------------------------------------------- 底部：字数 + 缩放
         var footBar = new Border { Padding = new Thickness(12, 1, 6, 3) };
 
@@ -657,7 +709,7 @@ public partial class MainWindow
             return;
         }
 
-        _panes.Add(NewPane(new RefDocSpec { Kind = RefKind.External }));
+        _panes.Add(NewPane(new RefDocSpec()));
         _weights.Clear();   // 栏数变了，旧比例不适用
         RebuildPanes();
         SavePaneLayout();
@@ -682,7 +734,6 @@ public partial class MainWindow
             {
                 blank.Spec = new RefDocSpec
                 {
-                    Kind = RefKind.External,
                     Path = Path.GetFullPath(p),
                     Label = Path.GetFileName(p),
                     Zoom = blank.Spec.Zoom,      // 空栏自己那点缩放留着
@@ -701,7 +752,6 @@ public partial class MainWindow
 
             _panes.Add(NewPane(new RefDocSpec
             {
-                Kind = RefKind.External,
                 Path = Path.GetFullPath(p),
                 Label = Path.GetFileName(p),
                 Zoom = 1.0,
@@ -736,6 +786,70 @@ public partial class MainWindow
         _weights.Clear();
         RebuildPanes();
         SavePaneLayout();
+    }
+
+    /// <summary>
+    /// 栏头的"文件不在了"提示条。只在真有路径、却读不到内容时亮 ——
+    /// 空栏是正常状态（还没放东西），不该报警。
+    /// </summary>
+    private void UpdateMissingBar(PaneView pane, bool ok, string problem)
+    {
+        if (pane.MissingBar == null || pane.MissingText == null) return;
+
+        string path = pane.Spec.Path;
+        bool show = path.Length > 0 && !ok;
+
+        pane.MissingBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
+
+        // 文件还在、只是读不了（占用/没权限）时，别骗人说"不在了"
+        bool fileThere = File.Exists(path);
+        string head = fileThere ? "这个文件读不了：" : "这个文件不在了：";
+        string why = problem.Length > 0 ? problem : "可能被移走、改名或删了。";
+
+        pane.MissingText.Text = head + why + "\n" + path;
+    }
+
+    /// <summary>
+    /// 这一栏的文件被移走了：让用户指新位置。只改这一栏的路径，不动文件本身。
+    /// 进度是按"文件名"记的 —— 文件名变了，就把旧名字下那条进度迁到新名字下，
+    /// 不然挪个位置进度就凭空归零了。
+    /// </summary>
+    private void RelocatePane(int index)
+    {
+        if (index < 0 || index >= _panes.Count) return;
+        var pane = _panes[index];
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "这个文件现在在哪？",
+            Filter = "所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (_store != null) dlg.InitialDirectory = _store.Root;
+        if (dlg.ShowDialog(this) != true) return;
+
+        string oldPath = pane.Spec.Path;
+        string newPath = dlg.FileName;
+        string oldKey = oldPath.Length > 0 ? Path.GetFileName(oldPath) : "";
+        string newKey = Path.GetFileName(newPath);
+
+        if (_store != null && oldKey.Length > 0
+            && !string.Equals(oldKey, newKey, StringComparison.OrdinalIgnoreCase)
+            && _progress.Files.TryGetValue(oldKey, out int mark)
+            && !_progress.Files.ContainsKey(newKey))
+        {
+            try { ProgressStore.Set(_store.Root, _progress, newKey, mark); }
+            catch (Exception) { /* 进度迁不过去不影响打开文件 */ }
+        }
+
+        pane.Spec.Path = Path.GetFullPath(newPath);
+        pane.Spec.Label = newKey;
+        RememberRef(newPath);
+
+        RebuildPanes();
+        SavePaneLayout();
+        Status("这一栏改指着 " + newKey);
     }
 
     /// <summary>和相邻的一栏换位。译文栏不参与换位，所以到边界就不动。</summary>
@@ -787,7 +901,7 @@ public partial class MainWindow
             list.Add(new PaneChoice
             {
                 Display = Path.GetFileName(f),
-                Spec = new RefDocSpec { Kind = RefKind.External, Path = f, Label = Path.GetFileName(f) },
+                Spec = new RefDocSpec { Path = f, Label = Path.GetFileName(f) },
             });
         }
 
@@ -820,7 +934,6 @@ public partial class MainWindow
 
             pane.Spec = new RefDocSpec
             {
-                Kind = RefKind.External,
                 Path = dlg.FileName,
                 Label = Path.GetFileName(dlg.FileName),
                 Zoom = pane.Spec.Zoom,
@@ -866,6 +979,7 @@ public partial class MainWindow
     {
         foreach (var p in _panes) RefreshOne(p);
         BtnAddPane.IsEnabled = _panes.Count < MaxRefPanes;
+        RefreshMissingIndicator();   // 状态栏那句"N 个文件不在了"跟着一起更新
     }
 
     private void RefreshOne(PaneView pane)
@@ -877,8 +991,12 @@ public partial class MainWindow
         if (pane.Body == null) return;   // 刚加进来还没画
 
         double zoom = Math.Clamp(pane.Spec.Zoom, MinZoom, MaxZoom);
-        string text = ResolvePaneContent(pane.Spec, out string note, out bool exists, out bool isMarkdown);
+        string text = ResolvePaneContent(pane.Spec, out string note, out bool exists,
+                                         out bool isMarkdown, out string problem);
         var style = MakeStyle(zoom);
+
+        // 栏头的"文件不在了"提示条：只有真指着一个路径、却读不到内容时才亮
+        UpdateMissingBar(pane, exists, problem);
 
         // "译到哪了"的竖线：这一栏能点就画，进度记在这一栏自己那份文件的名字下
         pane.ProgressKey = exists ? ProgressKeyOf(pane.Spec) : "";
@@ -939,6 +1057,8 @@ public partial class MainWindow
         string path = pane.Spec.Path;
         bool exists = File.Exists(path);
 
+        UpdateMissingBar(pane, exists, exists ? "" : "可能被移走、改名或删了。");
+
         if (pane.Caption != null)
         {
             pane.BaseCaption = exists
@@ -966,8 +1086,11 @@ public partial class MainWindow
     }
 
     /// <summary>一栏该显示什么。exists=false 表示这段字是提示语，不是文件内容。</summary>
-    private string ResolvePaneContent(RefDocSpec spec, out string note, out bool exists, out bool isMarkdown)
+    private string ResolvePaneContent(RefDocSpec spec, out string note, out bool exists,
+                                      out bool isMarkdown, out string problem)
     {
+        problem = "";
+
         if (spec.Path.Length == 0)
         {
             note = "还没放东西";
@@ -981,14 +1104,22 @@ public partial class MainWindow
             note = "文件不在了";
             exists = false;
             isMarkdown = false;
-            return "找不到这个文件（可能被移走、改名或删了）：\n\n" + spec.Path;
+            problem = "可能被移走、改名或删了。";
+
+            // 这句只说"这里缺东西、上面能怎么办"；路径和原因已经由栏头提示条说清楚了，
+            // 正文里再抄一遍只会让一栏字看起来更乱。
+            return "这个文件不在了。\n\n它原来的位置还记在项目里 —— 用上面的「重新指定…」告诉我它现在在哪，或者「移除这一栏」。";
         }
 
-        return ReadForDisplay(spec.Path, Path.GetFileName(spec.Path), out note, out exists, out isMarkdown);
+        return ReadForDisplay(spec.Path, Path.GetFileName(spec.Path), out note, out exists,
+                              out isMarkdown, out problem);
     }
 
-    private string ReadForDisplay(string path, string caption, out string note, out bool exists, out bool isMarkdown)
+    private string ReadForDisplay(string path, string caption, out string note, out bool exists,
+                                  out bool isMarkdown, out string problem)
     {
+        problem = "";
+
         // PDF 走另一条路：先抽文字层，再当纯文本排。
         // 抽一次要一两秒（两百多页的 PDF），所以按"路径 + 修改时间"缓存，
         // 缩放、切章、重排都不会重复解析。
@@ -1001,6 +1132,7 @@ public partial class MainWindow
             {
                 note = caption + " · 读不出字";
                 exists = false;
+                problem = pdf.Reason;
                 return "这份 PDF 没有可读的文字：\n\n" + pdf.Reason + "\n\n" + path +
                        "\n\n扫描件只能当图片看，YiTai 不做 OCR。";
             }
@@ -1013,13 +1145,17 @@ public partial class MainWindow
         }
 
         isMarkdown = IsMarkdownPath(path);
-        var info = TextFile.Read(path);
+        var info = TextFile.Read(path);     // 不抛异常：读不了的原因在 State / Problem 里
 
-        if (!info.Exists)
+        if (info.State != TextReadState.Ok)
         {
             note = caption + " · 读不到";
             exists = false;
-            return "读不到这个文件（可能被移走、改名或删了）：\n\n" + path;
+            problem = info.Problem;
+
+            return info.State == TextReadState.Missing
+                ? "找不到这个文件（可能被移走、改名或删了）：\n\n" + path
+                : "这个文件读不了：\n\n" + info.Problem + "\n\n" + path;
         }
 
         note = caption + " · " + TextStats.CountChars(info.Text) + " 字 · " +
@@ -1130,12 +1266,11 @@ public partial class MainWindow
 
     private static RefDocSpec CloneSpec(RefDocSpec s) => new RefDocSpec
     {
-        Kind = s.Kind,
         Path = s.Path,
         Label = s.Label,
         Zoom = s.Zoom,
     };
 
     private static bool SameSpec(RefDocSpec a, RefDocSpec b)
-        => a.Kind == b.Kind && string.Equals(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
+        => string.Equals(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
 }

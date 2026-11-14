@@ -54,15 +54,23 @@ public static class ProjectLayout
     /// </summary>
     public static string PaneLayoutFile(string root) => Path.Combine(Private(root), PaneLayoutFileName);
 
-    /// <summary>建好一个新项目所需的空目录（不覆盖已存在的内容）。</summary>
+    /// <summary>
+    /// 建好一个项目"必须有"的空目录（不覆盖已存在的内容）。
+    ///
+    /// ★ sources\ **不在这里建**：它是可选的归档区，从零开始写的项目根本用不到它。
+    ///   预先塞一个空 sources\ 只会让人以为"我还没导入原文，是不是没弄好"。
+    ///   真正要往里面放文件的地方（导入资料）自己调 <see cref="EnsureSources"/>。
+    /// </summary>
     public static void EnsureCreated(string root)
     {
         Directory.CreateDirectory(root);
-        Directory.CreateDirectory(Sources(root));
         Directory.CreateDirectory(Translations(root));
         Directory.CreateDirectory(Backups(root));
         Directory.CreateDirectory(Private(root));
     }
+
+    /// <summary>归档区：只在真的要往里放资料时才建。</summary>
+    public static void EnsureSources(string root) => Directory.CreateDirectory(Sources(root));
 
     /// <summary>默认译文路径：translations\&lt;源文件名去扩展名&gt;.md</summary>
     public static string DefaultTranslationPath(string root, string sourceFileName)

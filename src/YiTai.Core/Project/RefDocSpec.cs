@@ -2,40 +2,23 @@
 // RefDocSpec.cs —— 对照栏里的"这一栏放什么"
 // ============================================================
 //
-// 同屏对照要放的东西只有四种可能：
-//   跟随当前打开的那份资料文件 / 项目里某个源文件 / 项目里某份译文 / 项目外的随意一份文本。
+// 一栏就是"一个文件"，没有别的分类。
+// ★ 早期版本这里有个 RefKind（跟随当前章 / 项目里的源文件 / 项目里的译文 / 项目外文本），
+//   四个值里三个早就不再生效、默认值还指向死语义 —— 已经整块删掉了。
+//   旧项目里的 .yitai\panes.json 还带着 "Kind" 字段，读的时候由 JsonSerializer
+//   直接忽略（不认识的键默认跳过），所以老项目打开照样能摆回来。
 //
 // 它**不写进 project.json**。project.json 说的是"这本书怎么翻"；
-// 栏怎么摆、摆几栏，是"这个软件上次什么样"，属于 settings.json。
+// 栏怎么摆、摆几栏，是"这个软件上次什么样"，属于 .yitai\panes.json（settings.json 里另存一份兜底）。
 //
-// Path 的写法随 Kind 变：
-//   FollowSource 留空
-//   Source       源文件名（相对 sources\）
-//   Translation  相对项目根的路径（项目外另存的译文允许记绝对路径）
-//   External     绝对路径
+// Path 约定：项目内的文件尽量存相对项目根的路径（换台机器、整个文件夹拷走也还在），
+//            项目外的存绝对路径。
 // ============================================================
 
 namespace YiTai.Core;
 
-public enum RefKind
-{
-    /// <summary>跟着译文栏当前那一章走，切章自动换。</summary>
-    FollowSource = 0,
-
-    /// <summary>项目 sources\ 里的某一份。</summary>
-    Source = 1,
-
-    /// <summary>项目里某一份译文（可以不是当前章的，用来看旧稿 / 另一种语言的稿）。</summary>
-    Translation = 2,
-
-    /// <summary>项目外的任意文本，只读，不进项目。</summary>
-    External = 3,
-}
-
 public sealed class RefDocSpec
 {
-    public RefKind Kind { get; set; } = RefKind.FollowSource;
-
     public string Path { get; set; } = "";
 
     /// <summary>给人看的备注，程序不解释。</summary>

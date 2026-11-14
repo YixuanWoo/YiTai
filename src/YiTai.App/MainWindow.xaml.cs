@@ -41,6 +41,12 @@ public partial class MainWindow : Window
     private bool _loading;      // 正在程序性填内容，别把 TextChanged 当用户输入
     private bool _previewing;   // 译文栏是否切到了"渲染预览"（编辑区仍在，只是藏起来）
 
+    /// <summary>当前这篇译文的文件读不了（缺失/没权限/被独占）。此时编辑区锁着，等用户选一条路。</summary>
+    private bool _missingTrans;
+
+    /// <summary>状态栏那句"N 个文件不在了"点开时列的东西：资料栏 + 当前这篇译文里读不到的路径。</summary>
+    private readonly List<string> _missingPaths = new();
+
     public MainWindow()
     {
         InitializeComponent();
@@ -365,14 +371,150 @@ public partial class MainWindow : Window
         _dirty = false;
         _autoSave.Stop();
 
-        TbxTranslation.IsEnabled = true;
+        // ★ 读不了就先别让人写：编辑区只读 + 上方黄条说清楚，
+        //   否则空白编辑区会让人以为"这章还没开始"，一入字保存就在原路径长出一份新文件，
+        //   把"其实是一份旧稿被移走了"这件事彻底盖掉。
+        _missingTrans = _doc.State != TextReadState.Ok;
+        TbxTranslation.IsEnabled = !_missingTrans;
         LineNumPanel.Visibility = Visibility.Visible;
         EmptyTrans.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = RelativeForDisplay(trPath);
+        ShowMissingTrans(trPath);
+
         RefreshPanes();   // 缩放之类的栏内状态刷一下（栏里放什么是不跟着译文变的）
         if (_previewing) RefreshPreview();
         UpdateStat();
-        Status(_doc.Exists ? "已载入" : "文件还不存在，一开写就会建");
+        Status(_missingTrans ? "这篇译文的文件读不了，先别写" : "已载入");
+    }
+
+    // ================================================================ 译文文件不在了
+
+    /// <summary>
+    /// 编辑区上方那条提示。只在文件读不了时亮，三颗按钮给人三条路：
+    /// 指一份现有的稿子过来 / 就按原文件名建空稿从头写 / 什么都不动先只读。
+    /// 用提示条而不是弹窗：这不是"出事了"，是"这里缺东西，你决定怎么办"，
+    /// 不该每次开项目都被一个对话框拦住。
+    /// </summary>
+    private void ShowMissingTrans(string trPath)
+    {
+        if (!_missingTrans)
+        {
+            MissingTransBar.Visibility = Visibility.Collapsed;
+            RefreshMissingIndicator();
+            return;
+        }
+
+        string reason = _doc!.Problem.Length > 0 ? _doc.Problem : "文件不在了。";
+
+        TxtMissingTrans.Text =
+            "这篇译文的文件读不了：" + reason + "\n" +
+            RelativeForDisplay(trPath) + "\n" +
+            "选一条：重新指定（把现有的稿子复制到这里）· 在这里新建空稿 · 先只读。在选之前编辑区是锁着的。";
+
+        MissingTransBar.Visibility = Visibility.Visible;
+        RefreshMissingIndicator();
+    }
+
+    /// <summary>"重新指定"：把用户挑的那份稿子**复制**到它原来的位置，再重新载入。</summary>
+    private void OnRelocateTranslation(object sender, RoutedEventArgs e)
+    {
+        if (_store == null || _current == null) return;
+
+        string trPath = _store.TranslationAbsPath(_current);
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "这份译文现在在哪？",
+            Filter = "Markdown / 文本 (*.md;*.markdown;*.txt)|*.md;*.markdown;*.txt|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        try
+        {
+            // 目标位置此刻确实没有文件（我们正是因为它不在才提示的），所以覆盖风险为零；
+            // 万一中途有人替它建了一份，也宁可报错不覆盖。
+            File.Copy(dlg.FileName, trPath, overwrite: false);
+        }
+        catch (Exception ex)
+        {
+            Warn("没能放回去", ex.Message);
+            return;
+        }
+
+        LoadTranslation(_current);
+        Status("已把选中的稿子放回原位置：" + RelativeForDisplay(trPath));
+    }
+
+    /// <summary>"在这里新建空稿"：按原文件名建一份空文件，从头写。旧内容就算有也找不回来了，所以要说清。</summary>
+    private void OnCreateMissingTranslation(object sender, RoutedEventArgs e)
+    {
+        if (_store == null || _current == null) return;
+
+        string trPath = _store.TranslationAbsPath(_current);
+
+        var answer = MessageBox.Show(this,
+            "就在原位置建一份空稿，从零开始写？\n\n" + RelativeForDisplay(trPath) +
+            "\n\n（如果那份旧稿其实还在别处，先按「取消」，改用「重新指定…」把它找回来。）",
+            "新建空稿", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.OK) return;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(trPath)!);
+            TextFile.WriteAtomic(trPath, "", "\n", withBom: false);
+        }
+        catch (Exception ex)
+        {
+            Warn("没建成", ex.Message);
+            return;
+        }
+
+        LoadTranslation(_current);
+        Status("已建空稿，可以开始写了");
+    }
+
+    /// <summary>"先只读"：收起提示条，编辑区继续锁着 —— 只是别拿黄条一直烦人。</summary>
+    private void OnDismissMissingTranslation(object sender, RoutedEventArgs e)
+    {
+        MissingTransBar.Visibility = Visibility.Collapsed;
+        Status("只读：这篇译文的文件读不了，改动不会保存");
+    }
+
+    /// <summary>
+    /// 状态栏那句"N 个文件不在了"。资料栏按路径查、译文按当前这一篇查；
+    /// 点一下能看到具体是哪几个。
+    /// </summary>
+    private void RefreshMissingIndicator()
+    {
+        _missingPaths.Clear();
+
+        foreach (var pane in _panes)
+            if (pane.Spec.Path.Length > 0 && !File.Exists(pane.Spec.Path))
+                _missingPaths.Add(pane.Spec.Path);
+
+        if (_missingTrans && _store != null && _current != null)
+            _missingPaths.Add(_store.TranslationAbsPath(_current));
+
+        if (_missingPaths.Count == 0)
+        {
+            TxtMissingCount.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TxtMissingCount.Text = $"⚠ {_missingPaths.Count} 个文件不在了";
+        TxtMissingCount.ToolTip = string.Join("\n", _missingPaths);
+        TxtMissingCount.Visibility = Visibility.Visible;
+    }
+
+    private void OnShowMissingList(object sender, RoutedEventArgs e)
+    {
+        if (_missingPaths.Count == 0) return;
+
+        MessageBox.Show(this,
+            "这些文件在记录里的位置已经找不到了：\n\n" + string.Join("\n", _missingPaths) +
+            "\n\n资料栏点栏头的「重新指定…」；译文点编辑区上方的「重新指定…」。",
+            "文件不在了", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     /// <summary>
@@ -390,6 +532,9 @@ public partial class MainWindow : Window
         _dirty = false;
         _autoSave.Stop();
 
+        _missingTrans = false;                 // 没有当前译文，就没有"译文缺失"这回事
+        MissingTransBar.Visibility = Visibility.Collapsed;
+
         TbxTranslation.IsEnabled = false;
         LineNumPanel.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = "";
@@ -399,6 +544,7 @@ public partial class MainWindow : Window
 
         UpdateStat();
         Status("");
+        RefreshMissingIndicator();
     }
 
     // ================================================================ 编辑 / 保存

@@ -29,7 +29,8 @@ public static class Diag
     public static readonly bool On =
         Environment.GetEnvironmentVariable("YITAI_DIAG") != "0";
 
-    private static readonly string LogPath = Path.Combine(
+    /// <summary>日志文件在哪。异常提示里要报给用户，所以是公开的。</summary>
+    public static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "YiTai", "diag.log");
 
@@ -107,6 +108,24 @@ public static class Diag
     }
 
     public static void AddUndo() { if (On) _undos++; }
+
+    /// <summary>
+    /// 记一次"不该发生但发生了"的错误（全局异常兜底用）。
+    /// 弹窗只给人看一句人话，完整堆栈进日志 —— 用户截图给得出原因，我们也不用猜。
+    /// 写不进去就算了，绝不让记日志本身再抛一次。
+    /// </summary>
+    public static void Error(string where, Exception? ex)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            File.AppendAllText(LogPath,
+                $"==== {DateTime.Now:yyyy-MM-dd HH:mm:ss} 异常 @ {where} ====\r\n" +
+                (ex == null ? "(无异常对象)\r\n" : ex + "\r\n"),
+                new UTF8Encoding(false));
+        }
+        catch (Exception) { /* 记不住就算了 */ }
+    }
 
     // ---------------------------------------------------------------- 落盘
 

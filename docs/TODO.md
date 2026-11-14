@@ -1,7 +1,7 @@
 # 开发待办 · YiTai
 
 > 整理自 2026-11-12 的设计耦合复查 + 11-14 的仓库整理。
-> 快照：`master`、编译 0 警告 0 错误、冒烟测试 34 项全过。
+> 快照：`master`、编译 0 警告 0 错误、冒烟测试 43 项全过。
 
 ## 怎么用这份清单
 
@@ -35,13 +35,21 @@
   *完成*：删掉 `AppSettings.LastSourceId`；冒烟测试新增一项"旧 settings.json 多出 LastSourceId 也照读"
   （`System.Text.Json` 默认忽略不认识的键）。验证：build 0 警告 0 错误，测试 34 → 35 项全过。
 
-- [ ] **T-4 `ProjectLayout.EnsureCreated` 不再强建 `sources\`**
+- [x] **T-4 `ProjectLayout.EnsureCreated` 不再强建 `sources\`（已完成）**
   归档目录是可选的，建它只是在暗示"必须先有原文"。
   *验收*：新建空项目后目录只有 `project.json / translations / backups / .yitai`。
+  *完成*：`EnsureCreated` 去掉 `sources\`；新增 `ProjectLayout.EnsureSources(root)`；
+  真正要往里放文件的地方自己调它 —— `ProjectStore.ImportFiles` 在 `File.Copy` 之前按需建目录
+  （不补这一步会抛 `DirectoryNotFoundException`，这就是这条改动的真实配套风险）。
+  验证：冒烟测试新增「新项目不预建 sources\」「导入时 sources\ 按需建出来且文件放进去」两项。
 
-- [ ] **T-5 `RefKind` 折叠**
+- [x] **T-5 `RefKind` 折叠（已完成）**
   四值枚举里三个已是死语义，默认值还指向死值。
   *验收*：只剩实际使用的种类；默认值与"未知/纯文本"一致；旧 pane 布局 JSON 仍能读。
+  *完成*：采用"直接删枚举 + `Kind` 字段"（实际只剩一个值，留个常量没有意义）。
+  `RefDocSpec` 只剩 `Path / Label / Zoom`；`MainWindow.Panes.cs` 里 9 处赋值、`CloneSpec`、`SameSpec` 一并清掉。
+  旧 `panes.json` 的 `"Kind"` 由 `System.Text.Json` 默认忽略未知键来兼容。
+  验证：冒烟测试新增「旧 panes.json 的 Kind 被忽略、Path 照读」。
 
 - [ ] **T-6 补应用图标**
   `csproj` 目前没有 `ApplicationIcon`，exe、任务栏、资源管理器里都是空白默认图标。
@@ -112,18 +120,40 @@
 > 现状查证：栏内正文已有"找不到这个文件"提示；但**启动恢复栏位时会把路径清空**（变成"这一栏还空着"），
 > 译文文件缺失时是**空白编辑区、无提示**，且 `File.ReadAllBytes` 遇到权限拒绝/被独占仍会抛异常。
 
-- [ ] **T-19 文件缺失可见化 + 全局兜底**
-  - [ ] **T-19a 读取结果统一**：Core 新增 `ReadResult`（`Exists` / `Reason`：不存在 / 无权限 / 被占用 / 路径无效 / 文字为空），
+- [x] **T-19 文件缺失可见化 + 全局兜底（已完成）**
+  - [x] **T-19a 读取结果统一**：Core 新增 `ReadResult`（`Exists` / `Reason`：不存在 / 无权限 / 被占用 / 路径无效 / 文字为空），
         所有读取入口（译文、资料栏、PDF 文字层）都返回它，**边界不抛异常**。
-  - [ ] **T-19b 栏位恢复不静默**：`NormalizeSpec` 找不到文件时**保留原路径**并标记缺失；
+        *完成*：落地为 `TextReadState`（Ok / Missing / NoAccess / Locked / InvalidPath / Failed）+ `TextFileInfo.State / Problem`；
+        `TextFile.Read` 全程 try/catch（空路径、不存在、是目录、无权限、目录不存在、路径过长、IO 独占、非法参数、其它各成一档），
+        **一律不抛**；`TranslationDoc` 增加 `State / Problem / Writable`，`TranslationStore.Load` 原样透传。
+  - [x] **T-19b 栏位恢复不静默**：`NormalizeSpec` 找不到文件时**保留原路径**并标记缺失；
         栏内显示"这个文件不在了"+原路径+`[重新指定…]` `[移除这一栏]`；重新指定后落盘、进度键随之迁移。
-  - [ ] **T-19c 译文缺失**：编辑区上方一条提示条（不弹窗）"这篇译文的文件不在了：<相对路径>"，
+        *完成*：`NormalizeSpec` 不再清空 `Path`（折成绝对路径留着）；`BuildPane` 在标题条下插一条提示条
+        （PDF 栏同样有）；`RefreshOne` / `RefreshPdfPane` 按读取结果决定显隐；`RelocatePane` 选新位置后
+        **文件名变了才迁移进度键**（改名不该让绿线归零），随后重画并落盘。
+  - [x] **T-19c 译文缺失**：编辑区上方一条提示条（不弹窗）"这篇译文的文件不在了：<相对路径>"，
         按钮 `[重新指定…]` `[在这里新建一份空稿]` `[先只读]`；用户选择前**编辑区只读**，防止保存时在错误位置长出新文件。
-  - [ ] **T-19d 全局兜底 + 汇总**：`DispatcherUnhandledException` / `TaskScheduler.UnobservedTaskException`
+        *完成*：`MissingTransBar` + `TxtMissingTrans`；`LoadTranslation` 按 `TranslationDoc.State` 决定锁不锁编辑区；
+        三条按钮各自落地（复制过来 / 建空稿带确认框 / 收起提示条保持只读）。
+        说明：打开项目时 `SyncTranslations` 会把磁盘上没有的条目丢掉，所以"文件被删"表现为**下拉里那一篇消失**；
+        这条提示条负责的是"打开期间文件被锁/被拒/被删"这类读不到的情形。
+  - [x] **T-19d 全局兜底 + 汇总**：`DispatcherUnhandledException` / `TaskScheduler.UnobservedTaskException`
         兜一层，弹"出错了，已保存的内容没丢"+写 `diag.log`，不静默退出；状态栏汇总"⚠ N 份资料不在了"。
+        *完成*：`App.xaml.cs` 装三道兜底（界面线程 / 后台任务 / 非界面线程），`Diag.Error(where, ex)` 把完整堆栈
+        追加进 `diag.log`，同一分钟内只提示一次；状态栏 `TxtMissingCount` 汇总缺失数，点开列出具体路径与去哪补救。
   *验收*：把一份资料改名 / 移到别的盘 / 删掉，三种情况重开软件都要看到明确提示与可操作按钮；
   给一份译文加"拒绝访问"权限后切过去，软件不退出、给出原因；
   新建空项目 + 缺文件项目都能正常打开、正常关闭。
+  *完成验证*（本地 Debug 版，`%TEMP%\yitai-t19-check` 沙盒项目，真窗口截图）：
+  ① 栏位指向一份不存在的 `01-原文\按章\ch07.md` → 该栏显示"这个文件不在了"提示条 + 两个按钮，状态栏"⚠ 2 个文件不在了"；
+  ② 点「移除这一栏」→ 该栏消失、布局重排、计数变 1，程序无异常；
+  ③ 用 `FileShare.None` 独占译文文件后启动 → 编辑区上方出现"文件被别的程序占着……"，编辑区锁住，
+     状态栏"这篇译文的文件读不了，先别写"；
+  ④ 点「先只读」→ 提示条收起、仍是只读、状态栏写明"改动不会保存"；
+  ⑤ 点「在这里新建空稿」→ 确认框弹出；在被独占时按确定 → "没建成"提示（异常被接住，程序没退）；
+  ⑥ 冒烟测试 35 → 43 项全过（新增 8 项覆盖 T-4 / T-5 / T-19a）。
+  ⑦ 未做：给文件加"拒绝访问"ACL 的那一遍（需改用户自己的文件权限，风险大于收益），
+     行为等价路径已由"被独占 → Locked"用例覆盖。
 
 ---
 

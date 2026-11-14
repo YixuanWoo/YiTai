@@ -147,6 +147,11 @@ public sealed class ProjectStore
     {
         var added = new List<SourceEntry>();
 
+        // 归档区是按需建的（见 ProjectLayout.EnsureCreated 的注释）：
+        // 真要把文件往里放，先确保目录在，否则 File.Copy 会抛 DirectoryNotFoundException。
+        foreach (string p in paths)
+            if (File.Exists(p)) { ProjectLayout.EnsureSources(Root); break; }
+
         foreach (string raw in paths)
         {
             if (!File.Exists(raw)) continue;

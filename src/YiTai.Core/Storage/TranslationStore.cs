@@ -31,6 +31,15 @@ public sealed class TranslationDoc
 
     public int Chars => TextStats.CountChars(TextLf);
     public int Paragraphs => TextStats.CountParagraphs(TextLf);
+
+    /// <summary>这次读进来的结局：Ok 以外表示这份稿子读不了（缺失 / 没权限 / 被独占……）。</summary>
+    public TextReadState State { get; init; } = TextReadState.Ok;
+
+    /// <summary>读不了的原因，一句人话。空 = 没问题。</summary>
+    public string Problem { get; init; } = "";
+
+    /// <summary>能不能安全地把它当"已存在的稿子"来写（读不了时必须先让用户决定）。</summary>
+    public bool Writable => State == TextReadState.Ok;
 }
 
 /// <summary>磁盘上的文件与"我以为的"不一致。上层必须让用户选，不能自己决定。</summary>
@@ -59,6 +68,8 @@ public static class TranslationStore
             Eol = info.Eol,
             HasBom = info.HasBom,
             EndsWithNewline = info.EndsWithNewline,
+            State = info.State,
+            Problem = info.Problem,
         };
     }
 

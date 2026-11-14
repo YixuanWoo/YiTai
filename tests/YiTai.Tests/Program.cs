@@ -46,7 +46,7 @@ string root = Path.Combine(box, "我的译本");
 var store = ProjectStore.CreateNew(root, "我的译本");
 
 Check("project.json 建出来了", File.Exists(ProjectLayout.ProjectFile(root)));
-Check("sources 目录存在", Directory.Exists(ProjectLayout.Sources(root)));
+Check("sources 目录不预先建（要往里放东西时才建）", !Directory.Exists(ProjectLayout.Sources(root)));
 Check("translations 目录存在", Directory.Exists(ProjectLayout.Translations(root)));
 Check("backups 目录存在", Directory.Exists(ProjectLayout.Backups(root)));
 Check("项目名记对了", store.Meta.Name == "我的译本", store.Meta.Name);
@@ -197,6 +197,57 @@ Check("sources 里两份", Directory.GetFiles(ProjectLayout.Sources(root)).Lengt
 Check("translations 里两份（另存那份已移开）",
       Directory.GetFiles(ProjectLayout.Translations(root)).Length == 2,
       Directory.GetFiles(ProjectLayout.Translations(root)).Length.ToString());
+
+// ============================================================ 10. 归档按需建 / 栏位折叠 / 文件读不了
+Console.WriteLine("\n== 10. 归档按需建 / 栏位折叠 / 文件读不了 ==");
+
+// T-4：从零建的项目不带空的 sources\；第一次真往里放东西时才建
+string t4 = Path.Combine(box, "t4");
+var s4 = ProjectStore.CreateNew(t4, "t4");
+Check("新项目不预建 sources\\", !Directory.Exists(ProjectLayout.Sources(t4)));
+
+string t4src = Path.Combine(box, "t4-src.md");
+File.WriteAllText(t4src, "一个字\n");
+s4.ImportFiles(new[] { t4src });
+Check("导入时 sources\\ 按需建出来且文件放进去",
+      File.Exists(Path.Combine(ProjectLayout.Sources(t4), "t4-src.md")));
+
+// T-5：老 panes.json 带着已删除的 "Kind"，读的时候必须忽略，其余字段照旧
+string t5 = Path.Combine(box, "t5");
+ProjectStore.CreateNew(t5, "t5");
+File.WriteAllText(ProjectLayout.PaneLayoutFile(t5),
+    "{\n  \"Version\": 1,\n  \"Panes\": [\n" +
+    "    { \"Kind\": 0, \"Path\": \"sources\\\\ch01.md\", \"Label\": \"ch01.md\", \"Zoom\": 1.0 }\n" +
+    "  ],\n  \"Weights\": [ 1.0, 1.0 ]\n}");
+var lay = PaneLayoutStore.Load(t5);
+Check("旧 panes.json 的 Kind 被忽略、Path 照读",
+      lay.Panes.Count == 1 && lay.Panes[0].Path == @"sources\ch01.md",
+      lay.Panes.Count == 0 ? "一条都没读到" : lay.Panes[0].Path);
+
+// T-19a：读不了 ≠ 崩。文件不在、被独占、空路径，全部收成状态返回
+string gone = Path.Combine(box, "根本没有.md");
+var goneInfo = TextFile.Read(gone);
+Check("读不存在的文件不抛异常，返回 Missing",
+      goneInfo.State == TextReadState.Missing && goneInfo.Problem.Length > 0,
+      goneInfo.State.ToString());
+
+var goneDoc = TranslationStore.Load(gone);
+Check("缺失译文 Writable=false，且带着原因",
+      !goneDoc.Writable && goneDoc.State == TextReadState.Missing && goneDoc.Problem.Length > 0);
+
+string lockPath = Path.Combine(box, "被占着.md");
+File.WriteAllText(lockPath, "内容\n");
+Check("正常文件读得到", TextFile.Read(lockPath).State == TextReadState.Ok);
+
+bool lockedOk;
+using (var hold = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+{
+    var lockedInfo = TextFile.Read(lockPath);
+    lockedOk = lockedInfo.State == TextReadState.Locked && lockedInfo.Text.Length == 0;
+}
+Check("文件被独占时返回 Locked 而不是抛异常", lockedOk);
+
+Check("空路径返回 InvalidPath", TextFile.Read("").State == TextReadState.InvalidPath);
 
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }

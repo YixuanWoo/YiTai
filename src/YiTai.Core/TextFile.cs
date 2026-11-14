@@ -36,47 +36,120 @@ public static class TextFile
 
     // ---------------------------------------------------------------- 读
 
-    /// <summary>读一份文本，并记下它的编码/换行习惯，供回写时照原样还原。</summary>
+    /// <summary>
+    /// 读一份文本，并记下它的编码/换行习惯，供回写时照原样还原。
+    ///
+    /// ★ 这个方法**永远不抛异常**：文件不在、没权限、被独占、路径不成立，
+    ///   一律把原因写进 <see cref="TextFileInfo.State"/> / <see cref="TextFileInfo.Problem"/> 返回。
+    ///   界面靠这份"人话"提示用户，而不是让一次 IO 失败把整个窗口带下去。
+    /// </summary>
     public static TextFileInfo Read(string path)
     {
         var info = new TextFileInfo();
 
-        if (!File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path))
         {
-            info.Exists = false;
+            info.State = TextReadState.InvalidPath;
+            info.Problem = "这一栏没有指向任何文件。";
             return info;
         }
 
-        byte[] bytes = File.ReadAllBytes(path);
-        info.Exists = true;
-
-        // BOM：EF BB BF
-        bool hasBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
-        info.HasBom = hasBom;
-
-        string text = hasBom
-            ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
-            : Encoding.UTF8.GetString(bytes);
-
-        // 换行风格：以 CRLF 出现次数为准（混排文件按多数派走）
-        int crlf = 0;
-        int lf = 0;
-        for (int i = 0; i < text.Length; i++)
+        try
         {
-            if (text[i] == '\n')
+            if (!File.Exists(path))
             {
-                if (i > 0 && text[i - 1] == '\r') crlf++;
-                else lf++;
+                info.Exists = false;
+                info.State = TextReadState.Missing;
+                info.Problem = "文件不在了（可能被移走、改名或删除）。";
+                return info;
             }
+
+            if (Directory.Exists(path))
+            {
+                info.Exists = true;
+                info.State = TextReadState.InvalidPath;
+                info.Problem = "这个路径是一个文件夹，不是文件。";
+                return info;
+            }
+
+            byte[] bytes = File.ReadAllBytes(path);
+            info.Exists = true;
+
+            // BOM：EF BB BF
+            bool hasBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            info.HasBom = hasBom;
+
+            string text = hasBom
+                ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+                : Encoding.UTF8.GetString(bytes);
+
+            // 换行风格：以 CRLF 出现次数为准（混排文件按多数派走）
+            int crlf = 0;
+            int lf = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\n')
+                {
+                    if (i > 0 && text[i - 1] == '\r') crlf++;
+                    else lf++;
+                }
+            }
+            info.Eol = crlf > lf ? "\r\n" : "\n";
+
+            info.EndsWithNewline = text.EndsWith("\n", StringComparison.Ordinal);
+
+            // 内部一律用 \n，省得每个下游都要考虑两种换行
+            info.Text = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            info.Sha = Sha16(info.Text);
+            info.State = TextReadState.Ok;
+            return info;
         }
-        info.Eol = crlf > lf ? "\r\n" : "\n";
-
-        info.EndsWithNewline = text.EndsWith("\n", StringComparison.Ordinal);
-
-        // 内部一律用 \n，省得每个下游都要考虑两种换行
-        info.Text = text.Replace("\r\n", "\n").Replace('\r', '\n');
-        info.Sha = Sha16(info.Text);
-        return info;
+        catch (UnauthorizedAccessException)
+        {
+            info.Exists = true;
+            info.State = TextReadState.NoAccess;
+            info.Problem = "文件在，但没有读取权限。";
+            return info;
+        }
+        catch (FileNotFoundException)
+        {
+            info.Exists = false;
+            info.State = TextReadState.Missing;
+            info.Problem = "文件不在了（可能被移走、改名或删除）。";
+            return info;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            info.State = TextReadState.InvalidPath;
+            info.Problem = "这个文件所在的文件夹不存在了。";
+            return info;
+        }
+        catch (PathTooLongException)
+        {
+            info.State = TextReadState.InvalidPath;
+            info.Problem = "路径太长，系统读不了。";
+            return info;
+        }
+        catch (IOException)
+        {
+            info.Exists = true;
+            info.State = TextReadState.Locked;
+            info.Problem = "文件被别的程序占着（同步盘、另一个编辑器正在保存……），暂时读不了。";
+            return info;
+        }
+        catch (ArgumentException)
+        {
+            info.State = TextReadState.InvalidPath;
+            info.Problem = "路径里有系统不认的字符。";
+            return info;
+        }
+        catch (Exception ex)
+        {
+            info.Exists = File.Exists(path);
+            info.State = TextReadState.Failed;
+            info.Problem = "读不了：" + ex.Message;
+            return info;
+        }
     }
 
     // ---------------------------------------------------------------- 写
