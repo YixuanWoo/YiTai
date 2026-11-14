@@ -55,6 +55,9 @@
     <Style TargetType="ScrollBar">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Width" Value="9"/>
+        <!-- 不设 Cursor 的话会从宿主（RichTextBox）继承 I 形文本光标：
+             表格里的横向滚动条看着就像"在选字"，没人会去拖它。 -->
+        <Setter Property="Cursor" Value="Arrow"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
@@ -131,7 +134,7 @@
                  横向改成：宽=铺满整条轨道，高=9px。 -->
             <Trigger Property="Orientation" Value="Horizontal">
                 <Setter Property="Width" Value="Auto"/>
-                <Setter Property="Height" Value="9"/>
+                <Setter Property="Height" Value="12"/>
             </Trigger>
         </Style.Triggers>
     </Style>
