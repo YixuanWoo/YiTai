@@ -23,11 +23,8 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- 读 PDF 文字层用。唯一的外部依赖（Apache-2.0，纯托管代码，无原生 dll）。
-         自己写 PDF 解析要应付 xref、对象流、Flate、字体编码和 ToUnicode CMap，
-         在容错上得不偿失。只在这一层用，界面层仍不碰第三方。 -->
-    <PackageReference Include="PdfPig" Version="0.1.16" />
-  </ItemGroup>
+  <!-- 这里**故意没有**任何 NuGet 依赖（曾经有 PdfPig，用来抽 PDF 文字层，已删 —— 见 T-12）。
+       零依赖是刻意的：单文件 exe 不再带第三方 dll，开源协作者 clone 下来只有 .NET 本身。
+       如果哪天要做「PDF 文字模式」（见 docs\TODO.md 的"将来可能做"），再加回来。 -->
 
 </Project>

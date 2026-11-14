@@ -1140,28 +1140,16 @@ public partial class MainWindow
     {
         problem = "";
 
-        // PDF 走另一条路：先抽文字层，再当纯文本排。
-        // 抽一次要一两秒（两百多页的 PDF），所以按"路径 + 修改时间"缓存，
-        // 缩放、切章、重排都不会重复解析。
+        // PDF 一律走 WebView2 原件栏（BuildPane 那一步就分流了），到不了这里。
+        // 留一句兜底：万一路径被别处改了、PDF 落进文字分支，也只说"原件显示"，
+        // 绝不把一串二进制当正文排出来。**不抽文字层**（T-12 选了方案 A）。
         if (IsPdfPath(path))
         {
-            var pdf = ReadPdfCached(path);
             isMarkdown = false;
-
-            if (!pdf.Ok)
-            {
-                note = caption + " · 读不出字";
-                exists = false;
-                problem = pdf.Reason;
-                return "这份 PDF 没有可读的文字：\n\n" + pdf.Reason + "\n\n" + path +
-                       "\n\n扫描件只能当图片看，YiTai 不做 OCR。";
-            }
-
-            note = caption + " · PDF " + pdf.Pages + " 页 · " +
-                   TextStats.CountChars(pdf.Text) + " 字 · " +
-                   TextStats.CountParagraphs(pdf.Text) + " 段";
-            exists = true;
-            return pdf.Text;
+            exists = false;
+            note = caption + " · PDF 原件";
+            problem = "";
+            return "这一栏是 PDF，按原件显示。";
         }
 
         isMarkdown = IsMarkdownPath(path);
@@ -1182,28 +1170,6 @@ public partial class MainWindow
                TextStats.CountParagraphs(info.Text) + " 段";
         exists = true;
         return info.Text;
-    }
-
-    /// <summary>PDF 解析结果缓存：路径 → (文件修改时刻, 结果)。文件被换掉才重解析。</summary>
-    private static readonly Dictionary<string, (DateTime Stamp, PdfTextResult Result)> PdfCache = new();
-
-    private static PdfTextResult ReadPdfCached(string path)
-    {
-        FileInfo info;
-
-        try { info = new FileInfo(path); }
-        catch (Exception) { return new PdfTextResult { Ok = false, Reason = "路径读不了" }; }
-
-        if (!info.Exists) return new PdfTextResult { Ok = false, Reason = "文件不在" };
-
-        string key = info.FullName.ToLowerInvariant();
-
-        var hit = PdfCache.TryGetValue(key, out var old) ? old : default;
-        if (hit.Result != null && hit.Stamp == info.LastWriteTimeUtc) return hit.Result;
-
-        var result = PdfText.Read(info.FullName);
-        PdfCache[key] = (info.LastWriteTimeUtc, result);
-        return result;
     }
 
     private static bool IsPdfPath(string path)
