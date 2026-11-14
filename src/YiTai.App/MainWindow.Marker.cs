@@ -24,6 +24,8 @@
 // ============================================================
 
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -386,6 +388,25 @@ public partial class MainWindow
     private void LoadProgress()
     {
         _progress = _store == null ? new ProgressState() : ProgressStore.Load(_store.Root);
+        if (_store == null) return;
+
+        var open = new List<string>();
+        try
+        {
+            var layout = PaneLayoutStore.Load(_store.Root);
+            foreach (var spec in layout.Panes)
+                if (spec.Path.Length > 0) open.Add(ProjectLayout.ToAbsolute(_store.Root, spec.Path));
+        }
+        catch (Exception) { /* 栏位记忆读不出来不影响搬进度 */ }
+
+        try
+        {
+            var (migrated, held) = ProgressStore.Migrate(_store.Root, _progress, open);
+            if (migrated > 0)
+                Status($"进度线已按文件路径归位（搬了 {migrated} 条"
+                       + (held > 0 ? $"，另有 {held} 条同名对不上、先留着" : "") + "）");
+        }
+        catch (Exception) { /* 搬家失败就当没这回事，旧键还在，线照样能标 */ }
     }
 
     // ---------------------------------------------------------------- 画线

@@ -355,6 +355,82 @@ Check("baseOffset 叠加正确", First(off, MdInlineKind.Highlight)?.SourceOffse
 var esc = MdParser.ParseInlines("\\==");
 Check("转义后不当高亮", CountKind(esc, MdInlineKind.Highlight) == 0 && Flat(esc) == "==", Flat(esc));
 
+// ============================================================ 12. 进度键绑文件路径（T-11）
+Console.WriteLine("\n== 12. 进度键绑文件路径（T-11）==");
+
+string p11 = Path.Combine(box, "进度");
+ProjectStore.CreateNew(p11, "进度");
+string dirA = Path.Combine(p11, "01-原文", "英文-带标注");
+string dirB = Path.Combine(p11, "01-原文", "英文-纯文本");
+Directory.CreateDirectory(dirA);
+Directory.CreateDirectory(dirB);
+File.WriteAllText(Path.Combine(dirA, "ch03.md"), "第一份\n");
+File.WriteAllText(Path.Combine(dirB, "ch03.md"), "第二份\n");
+string absA = Path.Combine(dirA, "ch03.md");
+string absB = Path.Combine(dirB, "ch03.md");
+
+string keyA = ProgressStore.KeyFor(p11, absA);
+string keyB = ProgressStore.KeyFor(p11, absB);
+Check("同一文件名、不同目录 → 两个不同的键", keyA != keyB, keyA + " / " + keyB);
+Check("项目内文件用 rel: 前缀", keyA.StartsWith("rel:"), keyA);
+Check("同一个路径永远同一个键", ProgressStore.KeyFor(p11, absA) == keyA);
+
+// 项目外的文件：只能用绝对路径
+string outside = Path.Combine(box, "项目外", "ch03.md");
+Directory.CreateDirectory(Path.GetDirectoryName(outside)!);
+File.WriteAllText(outside, "外面的\n");
+string keyOut = ProgressStore.KeyFor(p11, outside);
+Check("项目外文件用 abs: 前缀", keyOut.StartsWith("abs:"), keyOut);
+
+// 两份同名文件的进度互不干扰
+var st11 = new ProgressState();
+ProgressStore.Set(p11, st11, keyA, 4297);
+ProgressStore.Set(p11, st11, keyB, 88);
+Check("A 的线还是 4297", ProgressStore.Get(st11, keyA) == 4297, ProgressStore.Get(st11, keyA).ToString());
+Check("B 的线是 88，没被 A 影响", ProgressStore.Get(st11, keyB) == 88, ProgressStore.Get(st11, keyB).ToString());
+
+// 键 → 绝对路径，能反推回来
+Check("rel: 键能还原成绝对路径",
+      string.Equals(Path.GetFullPath(ProgressStore.ToAbsolutePath(p11, keyA)), Path.GetFullPath(absA),
+                    StringComparison.OrdinalIgnoreCase));
+Check("旧裸文件名认不出位置", ProgressStore.ToAbsolutePath(p11, "ch03.md") == "");
+
+// 迁移一：唯一对得上 → 搬到新键，旧键删掉，偏移不变
+var old11 = new ProgressState { Version = 1 };
+old11.Files["ch03.md"] = 4297;
+File.WriteAllText(ProjectLayout.ProgressFile(p11),
+    "{\n  \"Version\": 1,\n  \"Files\": {\n    \"ch03.md\": 4297\n  }\n}");
+var (mig, held) = ProgressStore.Migrate(p11, old11, new[] { absA });
+Check("唯一对得上就搬 1 条", mig == 1 && held == 0, mig + "/" + held);
+Check("新键下偏移没变", ProgressStore.Get(old11, keyA) == 4297);
+Check("旧裸键已清掉", !old11.Files.ContainsKey("ch03.md"));
+Check("迁移前留了一份 progress.json.bak", File.Exists(ProjectLayout.ProgressFile(p11) + ".bak"));
+Check("落盘的也是新键", File.ReadAllText(ProjectLayout.ProgressFile(p11)).Contains("rel:"));
+
+// 迁移二：同名两份都在"当前打开的栏位"里 → 拿不准，原样留着不动
+var ambiguous = new ProgressState { Version = 1 };
+ambiguous.Files["ch03.md"] = 4297;
+var (mig2, held2) = ProgressStore.Migrate(p11, ambiguous, new[] { absA, absB });
+Check("同名两份分不清 → 一条都不搬", mig2 == 0 && held2 == 1, mig2 + "/" + held2);
+Check("拿不准时旧键原样留着", ambiguous.Files.ContainsKey("ch03.md") && ambiguous.Files["ch03.md"] == 4297);
+
+// 迁移二·b：打开项目时没摆的栏 → 留着旧键，等这份文件被打开时现场认领
+var adopt = new ProgressState { Version = 1 };
+adopt.Files["ch03.md"] = 77;
+var (migNo, heldNo) = ProgressStore.Migrate(p11, adopt, Array.Empty<string>());
+Check("没打开的栏不瞎搬", migNo == 0 && heldNo == 1, migNo + "/" + heldNo);
+bool adopted = ProgressStore.AdoptLegacy(p11, adopt, keyA, "ch03.md");
+Check("打开这份文件时把旧键认领过来", adopted && ProgressStore.Get(adopt, keyA) == 77,
+      ProgressStore.Get(adopt, keyA).ToString());
+Check("认领后旧裸键没了", !adopt.Files.ContainsKey("ch03.md"));
+Check("认领结果落了盘", File.ReadAllText(ProjectLayout.ProgressFile(p11)).Contains("rel:"));
+
+// 迁移三：一份都对不上（文件已不在）→ 也留着，不猜
+var orphan = new ProgressState { Version = 1 };
+orphan.Files["没见过.md"] = 100;
+var (mig3, held3) = ProgressStore.Migrate(p11, orphan, new[] { absA, absB });
+Check("对不上任何文件时不动它", mig3 == 0 && held3 == 1, mig3 + "/" + held3);
+
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
 

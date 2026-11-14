@@ -202,10 +202,12 @@ public partial class MainWindow
 
         var picked = new List<string>();
 
-        // ① 进度里记过 offset 的文件
-        foreach (string name in _progress.Files.Keys)
+        // ① 进度里记过 offset 的文件（键是路径：rel:… / abs:…，旧裸文件名认不出位置就跳过）
+        foreach (string key in _progress.Files.Keys)
         {
-            string abs = Path.Combine(ProjectLayout.Sources(_store.Root), name);
+            string abs = ProgressStore.ToAbsolutePath(_store.Root, key);
+            if (abs.Length == 0) continue;
+            abs = Path.GetFullPath(abs);
             if (File.Exists(abs) && !picked.Contains(abs)) picked.Add(abs);
         }
 
@@ -817,7 +819,7 @@ public partial class MainWindow
 
     /// <summary>
     /// 这一栏的文件被移走了：让用户指新位置。只改这一栏的路径，不动文件本身。
-    /// 进度是按"文件名"记的 —— 文件名变了，就把旧名字下那条进度迁到新名字下，
+    /// 进度是按"文件位置"记的 —— 位置变了，就把旧键下那条进度迁到新键下，
     /// 不然挪个位置进度就凭空归零了。
     /// </summary>
     private void RelocatePane(int index)
@@ -836,10 +838,10 @@ public partial class MainWindow
 
         string oldPath = pane.Spec.Path;
         string newPath = dlg.FileName;
-        string oldKey = oldPath.Length > 0 ? Path.GetFileName(oldPath) : "";
-        string newKey = Path.GetFileName(newPath);
+        string oldKey = KeyOfPath(oldPath);
+        string newKey = KeyOfPath(newPath);
 
-        if (_store != null && oldKey.Length > 0
+        if (_store != null && oldKey.Length > 0 && newKey.Length > 0
             && !string.Equals(oldKey, newKey, StringComparison.OrdinalIgnoreCase)
             && _progress.Files.TryGetValue(oldKey, out int mark)
             && !_progress.Files.ContainsKey(newKey))
@@ -1003,9 +1005,22 @@ public partial class MainWindow
         // 栏头的"文件不在了"提示条：只有真指着一个路径、却读不到内容时才亮
         UpdateMissingBar(pane, exists, problem);
 
-        // "译到哪了"的竖线：这一栏能点就画，进度记在这一栏自己那份文件的名字下
+        // "译到哪了"的竖线：这一栏能点就画，进度记在这一栏自己那份文件的位置下
         pane.ProgressKey = exists ? ProgressKeyOf(pane.Spec) : "";
         pane.Markable = exists && text.Length > 0 && pane.ProgressKey.Length > 0;
+
+        // T-11 的"现场认领"：旧项目里只留下裸文件名（"ch03.md"）的那条进度，
+        // 而眼前这份文件的键还是空的 —— 那就是它了，搬过来，线才落得回原来的位置。
+        if (pane.Markable && _store != null
+            && ProgressStore.Get(_progress, pane.ProgressKey) < 0)
+        {
+            try
+            {
+                ProgressStore.AdoptLegacy(_store.Root, _progress, pane.ProgressKey,
+                                          Path.GetFileName(pane.Spec.Path));
+            }
+            catch (Exception) { /* 认领失败不影响打开 */ }
+        }
 
         // 换了文件，撤销账本里那条就指向旧文件了 —— 切章/换源之后不能再撤上一轮的线
         ForgetUndo();
@@ -1194,9 +1209,15 @@ public partial class MainWindow
     private static bool IsPdfPath(string path)
         => string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>这一栏的进度记在哪个名字下 —— 就是它自己那份文件的名字，各栏各记各的。</summary>
-    private string ProgressKeyOf(RefDocSpec spec)
-        => spec.Path.Length == 0 ? "" : Path.GetFileName(spec.Path);
+    /// <summary>这一栏的进度记在哪个键下 —— 绑的是"这份文件的位置"，不是光一个文件名。</summary>
+    private string ProgressKeyOf(RefDocSpec spec) => KeyOfPath(spec.Path);
+
+    /// <summary>路径 → 进度键（项目内相对、项目外绝对；同一个路径永远同一个键）。</summary>
+    private string KeyOfPath(string path)
+    {
+        if (path.Length == 0 || _store == null) return "";
+        return ProgressStore.KeyFor(_store.Root, ProjectLayout.ToAbsolute(_store.Root, path));
+    }
 
     /// <summary>.md / .markdown 才按 Markdown 画；其它（.txt 等）当纯文本，免得误吃格式。</summary>
     private static bool IsMarkdownPath(string path)
