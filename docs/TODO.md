@@ -263,6 +263,9 @@
   列宽按每格文字量出自然宽度、写成固定像素，`UpdateTablePageWidths` 再用表格自己的视口宽决定
   "栏够宽就按比例把列放大到撑满、不够宽就保持自然列宽让 ScrollViewer 出滚动条"；表头加粗 + `BgCardAlt` 底色；
   ④ 点击表格不落进度线（`OffsetAtPoint` 遇 `BlockUIContainer` 返回 -1，与 PDF 同口径）。
+  ⑤ 修过一轮真机问题：主题里 `ScrollBar` 样式把 `Width` 写死成 9px（竖向=宽 9px 没问题），
+  但表格的横向滚动条一用它，整条就被压成 **9px 长的一小截**，又小又拖不动；且 `Track.IsDirectionReversed`
+  也一直是 True（横向应 False）。已给该样式加 `Orientation=Horizontal` 触发器：宽=Auto、高=9、方向不反转。
   *验收*：`dotnet build` 0 警告 0 错误；冒烟测试 95 → 112 项全过（新增 17 项：基本表、三向对齐、
   无分隔行不认、单列表、转义竖线、多缺列、单元格粗体/高亮、表后接段落）；另用独立 WPF 最小工程量过
   "窄栏 420px/内容 800px → 横向滚动条 Visible、宽栏 1000px → Collapsed"。

@@ -116,9 +116,24 @@
                             </Track.IncreaseRepeatButton>
                         </Track>
                     </Grid>
+                    <ControlTemplate.Triggers>
+                        <!-- 水平滚动条方向不能反转（否则滑块在右、往左拖），竖向才反转 -->
+                        <Trigger Property="Orientation" Value="Horizontal">
+                            <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <!-- 原样式只有竖向口径：Width=9（竖向=宽 9px）。
+                 横向滚动条沿用它会变成"只有 9px 长的一小截"，滑块根本没法抓。
+                 横向改成：宽=铺满整条轨道，高=9px。 -->
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto"/>
+                <Setter Property="Height" Value="9"/>
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- ========================================================== 按钮 -->
