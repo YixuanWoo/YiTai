@@ -257,12 +257,15 @@
   ① `MdDoc`：新增 `MdBlockKind.Table` 与 `MdTable` / `MdTableRow` / `MdTableCell` / `MdColumnAlign`；
   ② `MdParser`：循环改 for，块开头认表（表头行含竖线 + 下一行是 `:---` 分隔行才成表）；`SplitRow` 处理
   `\|` 转义与代码跨里的 `|`；列数按分隔行定、多丢少补；单元格复用 `ParseInlines`（粗体 / 高亮 / 行内代码可用）；
-  ③ `MdRender`：表格进 `BlockUIContainer`，内放只读可选中 `FlowDocumentScrollViewer`，
-  `HorizontalScrollBarVisibility=Auto`、垂直滚动交给外层；两遍测量取自然宽度，`UpdateTablePageWidths`
-  按"栏够宽就撑满、不够宽就出横向滚动条"设内层 `PageWidth`；表头加粗 + `BgCardAlt` 底色；
+  ③ `MdRender`：表格进 `BlockUIContainer`，里面是 `Border`(1px 外框) → `ScrollViewer`(横向滚动条在表格正下方)
+  → `Grid`(固定像素列宽)，单元格是 `TextBlock` + 带边框的 `Border`。**不用 FlowDocument 的 `Table`**：
+  它的列宽天生"缩到页宽"，宽表只会被压成一列单字、怎么给页宽都不出滚动条（试过两轮，放弃）。
+  列宽按每格文字量出自然宽度、写成固定像素，`UpdateTablePageWidths` 再用表格自己的视口宽决定
+  "栏够宽就按比例把列放大到撑满、不够宽就保持自然列宽让 ScrollViewer 出滚动条"；表头加粗 + `BgCardAlt` 底色；
   ④ 点击表格不落进度线（`OffsetAtPoint` 遇 `BlockUIContainer` 返回 -1，与 PDF 同口径）。
   *验收*：`dotnet build` 0 警告 0 错误；冒烟测试 95 → 112 项全过（新增 17 项：基本表、三向对齐、
-  无分隔行不认、单列表、转义竖线、多缺列、单元格粗体/高亮、表后接段落）。
+  无分隔行不认、单列表、转义竖线、多缺列、单元格粗体/高亮、表后接段落）；另用独立 WPF 最小工程量过
+  "窄栏 420px/内容 800px → 横向滚动条 Visible、宽栏 1000px → Collapsed"。
   *边界（已写入 README）*：表格前面要空行（或它本身就是块的开头）；单列宽度封顶 40 个字宽，
   防一个单元格塞了上千字没断行把这一列拉出天际；表格内点不出进度线。
 

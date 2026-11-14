@@ -409,30 +409,18 @@ public static class MdRender
     // ---------------------------------------------------------------- 表格（GFM 管道表）
 
     /// <summary>
-    /// 表格不是文档里的普通块，而是塞进一个 BlockUIContainer：
-    /// 里面再放一个 FlowDocumentScrollViewer（只读、可选中），横向滚动条在表格底下。
-    /// 这样宽表不会被栏宽挤成一列单字 —— 拖它自己的滚动条看全。
+    /// 表格用 Grid 画，外面套一个 ScrollViewer（横向滚动条在表格正下方）。
+    /// 不用 FlowDocument 里的 Table：那个 Table 的列宽天生会"缩到页宽"，
+    /// 宽表只会被挤成一列单字，怎么给页宽都不出横向滚动条。
+    /// Grid 的列宽是固定像素，宽了 ScrollViewer 自己就滚；窄表由界面把列放大到撑满
+    /// （见 MainWindow.UpdateTablePageWidths）。
     /// </summary>
     private static BlockUIContainer TableBlock(MdBlock block, MdStyle st)
     {
         var table = block.Table!;
-        var inner = new FlowDocument
-        {
-            PagePadding = new Thickness(0),
-            ColumnWidth = double.PositiveInfinity,
-            ColumnGap = 0,
-            FontFamily = st.Body,
-            FontSize = st.FontSize,
-            Foreground = st.Text,
-            LineHeight = st.FontSize * 1.45,
-        };
-
         int cols = table.Aligns.Count;
-        var t = new Table { CellSpacing = 0, Margin = new Thickness(0) };
 
-        // 按内容量每一列的自然宽度，写成**固定像素**列宽：
-        // 只有固定列宽，表格才不会为了适应栏宽把列压扁 —— 宽了就让外面的横向滚动条去滚。
-        // Auto 列宽在 FlowDocument 里一定是"缩到页宽"，滚动条永远不会出现。
+        // 量每一列的自然宽度：取该列最宽那格的文字宽度，写成固定像素列宽。
         var colW = new List<double>(cols);
         for (int c = 0; c < cols; c++)
         {
@@ -446,48 +434,56 @@ public static class MdRender
             // 左右内边距 16 + 右边线 1 + 一点余量，免得差一像素就提前折行
             double width = Math.Clamp(widest + 22, 44, st.FontSize * 40);
             colW.Add(width);
-            t.Columns.Add(new TableColumn { Width = new GridLength(width) });
         }
 
-        var group = new TableRowGroup();
+        var grid = new Grid();
+        foreach (double w in colW)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(w) });
+        for (int r = 0; r < table.Rows.Count; r++)
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
         for (int r = 0; r < table.Rows.Count; r++)
         {
             var row = table.Rows[r];
-            var tr = new TableRow();
 
             for (int c = 0; c < cols; c++)
             {
                 var cell = row.Cells[c];
-                var p = new Paragraph
-                {
-                    Margin = new Thickness(0),
-                    LineHeight = st.FontSize * 1.45,
-                    TextAlignment = AlignmentOf(table.Aligns[c]),
-                };
-                if (row.IsHeader) p.FontWeight = FontWeights.Bold;
-                AppendInlines(p, cell.Inlines, st);
 
-                var tc = new TableCell
+                var tb = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = AlignmentOf(table.Aligns[c]),
+                    FontFamily = st.Body,
+                    FontSize = st.FontSize,
+                    Foreground = st.Text,
+                    LineHeight = st.FontSize * 1.45,
+                };
+                if (row.IsHeader) tb.FontWeight = FontWeights.Bold;
+                AppendInlinesTo(tb.Inlines, cell.Inlines, st);
+
+                var box = new Border
                 {
                     BorderBrush = st.TableBorder,
                     // 只画右、下两条线，网格线不叠成 2px；最右/最下一列由外层边框补上
                     BorderThickness = new Thickness(0, 0, c < cols - 1 ? 1 : 0, r < table.Rows.Count - 1 ? 1 : 0),
                     Padding = new Thickness(8, 4, 8, 4),
+                    Child = tb,
                 };
-                if (row.IsHeader) tc.Background = st.TableHeaderBg;
-                tc.Blocks.Add(p);
-                tr.Cells.Add(tc);
-            }
-            group.Rows.Add(tr);
-        }
-        t.RowGroups.Add(group);
-        inner.Blocks.Add(t);
+                if (row.IsHeader) box.Background = st.TableHeaderBg;
 
-        var viewer = new FlowDocumentScrollViewer
+                Grid.SetRow(box, r);
+                Grid.SetColumn(box, c);
+                grid.Children.Add(box);
+            }
+        }
+
+        double natural = 0;
+        foreach (double w in colW) natural += w;
+
+        var sv = new ScrollViewer
         {
-            Document = inner,
-            IsSelectionEnabled = true,
-            IsToolBarVisible = false,
+            Content = grid,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Padding = new Thickness(0),
@@ -495,21 +491,14 @@ public static class MdRender
             BorderThickness = new Thickness(0),
         };
 
-        // 表格宽度 = 各列自然宽度之和。界面对它做两件事：
-        //   栏够宽 → 按比例把列放大到正好撑满（不出现滚动条）；
-        //   栏不够宽 → 列宽原样，页宽 > 视口，横向滚动条自己出来。
-        double natural = 0;
-        foreach (double w in colW) natural += w;
-
         var outer = new Border
         {
             BorderBrush = st.TableBorder,
             BorderThickness = new Thickness(1),
             Margin = new Thickness(0, st.FontSize * 0.4, 0, st.FontSize * 0.7),
-            Child = viewer,
+            Child = sv,
         };
-        inner.PageWidth = natural > 0 ? natural : double.NaN;
-        outer.Tag = new TableHostInfo { Doc = inner, Table = t, Host = outer, ColWidths = colW, NaturalWidth = natural };
+        outer.Tag = new TableHostInfo { Grid = grid, Viewer = sv, Host = outer, ColWidths = colW, NaturalWidth = natural };
 
         return new BlockUIContainer(outer);
     }
@@ -548,19 +537,19 @@ public static class MdRender
     };
 
     /// <summary>
-    /// 表格宿主信息：内层文档 / 表格本体 / 外层边框（拿它的实际宽度当"栏够不够宽"）/
-    /// 每列的自然宽度 / 所有列加起来多宽。由界面在布局后决定"撑满"还是"出滚动条"。
+    /// 表格宿主信息：表格本体（Grid，列宽是固定像素）/ 外层边框（拿它的实际宽度当"栏够不够宽"）/
+    /// 每列的自然宽度 / 所有列加起来多宽。界面布局后决定"撑满"还是"让它滚"。
     /// </summary>
     public sealed class TableHostInfo
     {
-        public FlowDocument Doc = null!;
-        public Table Table = null!;
+        public Grid Grid = null!;
+        public ScrollViewer Viewer = null!;
         public FrameworkElement Host = null!;
         public List<double> ColWidths = new();
         public double NaturalWidth;
     }
 
-    /// <summary>把这篇文档里所有的表格宿主（内层文档）收集起来，供界面设置页宽用。</summary>
+    /// <summary>把这篇文档里所有的表格宿主收集起来，供界面决定"撑满"还是"出滚动条"。</summary>
     public static List<TableHostInfo> ExtractTableHosts(FlowDocument doc)
     {
         var list = new List<TableHostInfo>();
@@ -584,6 +573,13 @@ public static class MdRender
     }
 
     private static void AppendInlines(Paragraph p, List<MdInline> inlines, MdStyle st)
+        => AppendInlinesTo(p.Inlines, inlines, st);
+
+    /// <summary>
+    /// 把行内段落塞进任意 InlineCollection：段落（FlowDocument）和表格单元格（TextBlock）
+    /// 用的都是同一套行内样式，只是装的地方不同，所以共用这一份。
+    /// </summary>
+    private static void AppendInlinesTo(InlineCollection target, List<MdInline> inlines, MdStyle st)
     {
         foreach (var inl in inlines)
         {
@@ -593,7 +589,7 @@ public static class MdRender
                 {
                     var b = new Bold();
                     b.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(b);
+                    target.Add(b);
                     break;
                 }
 
@@ -601,7 +597,7 @@ public static class MdRender
                 {
                     var it = new Italic();
                     it.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(it);
+                    target.Add(it);
                     break;
                 }
 
@@ -611,7 +607,7 @@ public static class MdRender
                     var it = new Italic();
                     it.Inlines.Add(MakeRun(inl));
                     b.Inlines.Add(it);
-                    p.Inlines.Add(b);
+                    target.Add(b);
                     break;
                 }
 
@@ -624,7 +620,7 @@ public static class MdRender
                         Foreground = st.CodeFg,
                     };
                     span.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(span);
+                    target.Add(span);
                     break;
                 }
 
@@ -636,7 +632,7 @@ public static class MdRender
                         TextDecorations = TextDecorations.Strikethrough,
                     };
                     span.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(span);
+                    target.Add(span);
                     break;
                 }
 
@@ -645,7 +641,7 @@ public static class MdRender
                     // 只给底色，不动字重字号 —— 高亮是"标出来"，不是"喊出来"
                     var span = new Span { Background = st.Mark };
                     span.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(span);
+                    target.Add(span);
                     break;
                 }
 
@@ -653,12 +649,12 @@ public static class MdRender
                 {
                     var link = new Hyperlink { Foreground = st.Accent };
                     link.Inlines.Add(MakeRun(inl));
-                    p.Inlines.Add(link);
+                    target.Add(link);
                     break;
                 }
 
                 default:
-                    p.Inlines.Add(MakeRun(inl));
+                    target.Add(MakeRun(inl));
                     break;
             }
         }
