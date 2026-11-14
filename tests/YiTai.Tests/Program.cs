@@ -65,7 +65,7 @@ File.WriteAllText(src1, body);
 var added = store.ImportFiles(new[] { src1 });
 Check("导入返回一条记录", added.Count == 1, added.Count.ToString());
 Check("文件复制进了 sources", File.Exists(ProjectLayout.Sources(root) + "\\ch01.md"));
-Check("原文件还在原地（是复制不是搬走）", File.Exists(src1));
+Check("源文件还在原地（是复制不是搬走）", File.Exists(src1));
 Check("清单里登记了", store.Meta.Sources.Count == 1);
 
 string tr = store.TranslationPath(store.Meta.Sources[0]);
@@ -91,7 +91,7 @@ Check("换行仍保持 CRLF", saved.Eol == "\r\n");
 Check("字数统计为正", saved.Chars > 0, saved.Chars.ToString());
 
 byte[] raw = File.ReadAllBytes(tr1);
-Check("没有 BOM（沿用原文件）", !(raw.Length >= 3 && raw[1] == 0xBB), "");
+Check("没有 BOM（沿用源文件）", !(raw.Length >= 3 && raw[1] == 0xBB), "");
 Check("落盘内容可回读", File.ReadAllText(tr1).Contains("蟒蛇"));
 
 // 空稿：拒绝

@@ -12,7 +12,7 @@
 //
 // 【BOM】
 //   你现有译稿是无 BOM 的 UTF-8。带 BOM 会让某些解析器把首行读成 \uFEFF第三章。
-//   → 沿用原文件状态。
+//   → 沿用源文件状态。
 //
 // 【原子性】
 //   直接覆盖写到一半断电 = 半个文件。先写同目录的 .tmp，再整体替换。
@@ -132,7 +132,7 @@ public static class TextFile
     // ---------------------------------------------------------------- 备份
 
     /// <summary>
-    /// 每天首次保存前备份一份上一版，命名 `原文件名-工作台-yyyyMMdd.md`。
+    /// 每天首次保存前备份一份上一版，命名 `源文件名-工作台-yyyyMMdd.md`。
     /// 已经有今天这份就不再重复备份。
     /// </summary>
     public static string? BackupOncePerDay(string path, string backupDir, DateTime now)

@@ -196,7 +196,7 @@ public static class MdRender
                 break;
         }
 
-        // 每个块都记住"我在原文的哪个字符位置"——进度竖线靠它落地
+        // 每个块都记住"我在文档里的哪个字符位置"——进度竖线靠它落地
         b.Tag = block.SourceOffset;
 
         doc.Blocks.Add(b);
@@ -205,10 +205,10 @@ public static class MdRender
     // ---------------------------------------------------------------- 位置反查
     //
     // 进度竖线要立在某句话前面，先得知道那句话在文档里的哪里。
-    // 渲染时每一截文字都把"我在原文第几个字"记在 Tag 上，这里顺着它找回去。
+    // 渲染时每一截文字都把"我在文档里第几个字"记在 Tag 上，这里顺着它找回去。
 
     /// <summary>
-    /// 原文偏移 → 文档里的位置（落点给前一截的末尾，越界给 null）。
+    /// 文档偏移 → 文档里的位置（落点给前一截的末尾，越界给 null）。
     /// </summary>
     public static TextPointer? PointerAtOffset(FlowDocument doc, int offset)
     {
@@ -268,7 +268,7 @@ public static class MdRender
 
 
     /// <summary>
-    /// 按原文偏移找该划进度线的块：取"起始偏移不大于 offset 的最后一个块"。
+    /// 按文档偏移找该划进度线的块：取"起始偏移不大于 offset 的最后一个块"。
     /// offset 落在第一块之前时给第一块；空文档给 null。
     /// </summary>
     public static Block? FindBlockByOffset(FlowDocument doc, int offset, out int index)
@@ -400,8 +400,8 @@ public static class MdRender
     // ==================================================================== 行内
 
     /// <summary>
-    /// 造一节文字，并把它的原文起点记在 Tag 上。
-    /// 点到哪个字，就能顺着这个 Tag 反推出"原文第几个字符"——进度线要这么定位。
+    /// 造一节文字，并把它的文档起点记在 Tag 上。
+    /// 点到哪个字，就能顺着这个 Tag 反推出"文档第几个字符"——进度线要这么定位。
     /// </summary>
     private static Run MakeRun(MdInline inl)
     {

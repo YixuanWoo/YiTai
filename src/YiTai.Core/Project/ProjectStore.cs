@@ -434,7 +434,7 @@ public sealed class ProjectStore
     }
 
     /// <summary>
-    /// 把一个已有的 md/txt 收进项目当译文（复制进 translations\，原文件不动）。
+    /// 把一个已有的 md/txt 收进项目当译文（复制进 translations\，源文件不动）。
     /// 同名已存在就加 (2)，绝不悄悄覆盖 —— 那可能是他自己改过的一版。
     /// </summary>
     public TranslationEntry ImportTranslation(string sourcePath)

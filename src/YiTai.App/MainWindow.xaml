@@ -3,14 +3,14 @@
      ============================================================
      结构（按软件的标准来，不做"向导式"的怪东西）：
        菜单栏：文件（新建/打开/保存/另存为/导入源文件/退出）、帮助
-       左栏：源文件选择 + 整篇原文（只读、可选中复制）
+       左栏：源文件选择 + 整篇资料（只读、可选中复制）
        右栏：整篇译文编辑区（所见即所存）
 
      ★ 界面不认识"注解""切句""章节"这些概念。它只拿两样东西：
        一份源文件全文、一份译文全文。以后要加章节树、双语对照、
        术语提示，都挂到侧边或新的面板上，不动这两块。
 
-     ★ 左侧刻意用等宽字、不做句级高亮：原文是给你读和复制用的，
+     ★ 左侧刻意用等宽字、不做句级高亮：资料是给你读和复制用的，
        不是待办清单。逐句高亮属于"阅读器"，等真需要时再加一层。
      ============================================================ -->
 <Window x:Class="YiTai.App.MainWindow"
@@ -63,7 +63,7 @@
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button x:Name="BtnNewTrans" Content="＋ 新建译文" Style="{StaticResource Btn}"
                             Click="OnNewTranslation" Margin="0,0,8,0"
-                            ToolTip="不用先有原文：起个名字就能开始写，译文统一落在 translations 里"/>
+                            ToolTip="不用先有资料：起个名字就能开始写，译文统一落在 translations 里"/>
                     <Button x:Name="BtnAddPane" Content="＋ 对照栏" Style="{StaticResource Btn}"
                             Click="OnAddPane" Margin="0,0,8,0"
                             ToolTip="再加一栏：任何文件都能放进来，只读，不会进项目"/>
@@ -88,7 +88,7 @@
         <!-- ======================================================== 多栏对照 -->
         <!--
             列由代码填（MainWindow.Panes.cs）：
-              第 0、2、4… 列 = 对照栏（资料 / 原文 / 别的语言的译文；可增减、可左右调）
+              第 0、2、4… 列 = 对照栏（资料 / 别的语言的译文 / PDF 原件；可增减、可左右调）
               每两栏之间夹一条可拖的分隔条
               最右一列 = 译文栏，钉死，只有它能写
 
@@ -163,7 +163,7 @@
                                        FontSize="13.5" FontWeight="SemiBold"
                                        HorizontalAlignment="Center" TextWrapping="Wrap"/>
                             <TextBlock x:Name="TxtEmptyHint"
-                                       Text="不用先有原文 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。"
+                                       Text="不用先有资料 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。"
                                        FontSize="11.5" Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="18"
                                        Foreground="{DynamicResource TextFaint}"
                                        HorizontalAlignment="Center" TextAlignment="Center"/>

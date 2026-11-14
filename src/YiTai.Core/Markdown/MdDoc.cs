@@ -51,9 +51,9 @@ public sealed class MdInline
     public string Url { get; set; } = "";
 
     /// <summary>
-    /// 这一截文字在原文里的起始偏移（绝对，不是段内相对）。
+    /// 这一截文字在文档里的起始偏移（绝对，不是段内相对）。
     /// 有了它，"译到哪了"的绿线才能落在某一段话的中间 —— 记号（** ` &gt;）被吃掉后，
-    /// 渲染出来的字与原文的位置对不上，只能靠解析时就记下来。
+    /// 渲染出来的字与文档的位置对不上，只能靠解析时就记下来。
     /// </summary>
     public int SourceOffset { get; set; }
 
@@ -73,13 +73,13 @@ public sealed class MdItem
 }
 
 /// <summary>
-/// 段落里的一行原文。
+/// 段落里的一行原始文本。
 /// 只给解析器内部用：把一段的多行拼回去（Markdown 的软换行语义），
 /// 拼的时候每一截文字都带着自己的绝对偏移，"译到哪了"的竖线才落得准。
 /// </summary>
 public sealed class MdLine
 {
-    /// <summary>这一行在原文里的字符偏移。</summary>
+    /// <summary>这一行在文档里的字符偏移。</summary>
     public int SourceOffset { get; set; }
 
     /// <summary>这一行结束的位置（不含换行符）。</summary>
@@ -99,13 +99,13 @@ public sealed class MdBlock
     /// <summary>列表是否有序。</summary>
     public bool Ordered { get; set; }
 
-    /// <summary>代码块原文（保留换行与缩进）。</summary>
+    /// <summary>代码块原始文本（保留换行与缩进）。</summary>
     public string Text { get; set; } = "";
 
     /// <summary>
-    /// 这一块在原文里的字符偏移（换行统一成 \n 之后的位置，0 起）。
-    /// 只有一个用途：把"译到哪了"的绿色标记钉在原文上 ——
-    /// 记"第几段"会在原文增删一段之后整体错位，记字符偏移则不会。
+    /// 这一块在文档里的字符偏移（换行统一成 \n 之后的位置，0 起）。
+    /// 只有一个用途：把"译到哪了"的绿色标记钉在文档上 ——
+    /// 记"第几段"会在文档增删一段之后整体错位，记字符偏移则不会。
     /// </summary>
     public int SourceOffset { get; set; }
 
@@ -116,7 +116,7 @@ public sealed class MdBlock
     public List<MdItem> Items { get; } = new();
 }
 
-/// <summary>一整篇解析结果。顺序就是原文顺序。</summary>
+/// <summary>一整篇解析结果。顺序就是文档顺序。</summary>
 public sealed class MdDoc
 {
     public List<MdBlock> Blocks { get; } = new();

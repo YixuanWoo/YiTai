@@ -10,15 +10,15 @@
 // 排版、折行、行距、滚动条长度，与没有标记时一模一样。
 //
 // 交互（一条比一条省事）：
-//   · 在原文栏里点一下（不拖选、不是双击的第二下）→ 竖线落到那句话前面
+//   · 在资料栏里点一下（不拖选、不是双击的第二下）→ 竖线落到那句话前面
 //   · Ctrl+Shift+↑ / ↓  → 上一句 / 下一句（按标点切句，不按段落跳）
 //   · 右键 → 「把进度标记放在这里」/「清除进度标记」（兜底）
 //
-// 为什么不自动跟着译文光标走：译文和原文之间没有对齐数据，按段落序号硬推，
+// 为什么不自动跟着译文光标走：译文和资料之间没有对齐数据，按段落序号硬推，
 // 一段对不上就整条线静默错位 —— 比没有标记更坏。宁可让人点一下。
 //
-// 位置怎么记：记"原文里的字符偏移"，不记"第几段"。
-// 原文增删一段之后，段序号全乱，字符偏移只是附近偏一点。
+// 位置怎么记：记"文档里的字符偏移"，不记"第几段"。
+// 资料增删一段之后，段序号全乱，字符偏移只是附近偏一点。
 //
 // 落盘在 .yitai\progress.json（见 ProjectLayout.ProgressFile）。
 // ============================================================
@@ -301,9 +301,9 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 鼠标位置对应原文的哪个字符。
-    /// 渲染时每一截文字都记了自己在原文的起点，所以这里能精确到"第几个字"，
-    /// 而不是只到"第几段"——原文常常一整章就是一大段。
+    /// 鼠标位置对应文档里的哪个字符。
+    /// 渲染时每一截文字都记了自己在文档里的起点，所以这里能精确到"第几个字"，
+    /// 而不是只到"第几段"——一份资料常常一整章就是一大段。
     /// </summary>
     private static int OffsetAtPoint(PaneView pane, Point point)
     {
@@ -322,7 +322,7 @@ public partial class MainWindow
 
         if (cur is Run run && run.Tag is int runStart)
         {
-            int delta = run.ContentStart.GetOffsetToPosition(pos);   // 这一截是 1:1 对应原文的
+            int delta = run.ContentStart.GetOffsetToPosition(pos);   // 这一截是 1:1 对应文档的
             return runStart + Math.Max(0, delta);
         }
 
@@ -468,7 +468,7 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 原文偏移 → 那个字在栏里的矩形。
+    /// 文档偏移 → 那个字在栏里的矩形。
     /// 坐标是正文视图自己的坐标（RichTextBox 的 TextPointer 给的），与叠在上面的 Canvas 同一套。
     /// </summary>
     private static Rect? RectAtOffset(FlowDocument doc, int offset)
@@ -538,7 +538,7 @@ public partial class MainWindow
         var pane = FirstMarkablePane();
         if (pane?.Body?.Document == null) return;
 
-        // 按"句子"走，不按"段落"走：原文常常一整章就是一大段，
+        // 按"句子"走，不按"段落"走：一份资料常常一整章就是一大段，
         // 按段落跳一下就是半章，那不叫一句。
         string text = ResolvePaneContent(pane.Spec, out _, out _, out _);
         if (text.Length == 0) return;
@@ -558,7 +558,7 @@ public partial class MainWindow
         if (target >= 0 && target != offset) SetMarker(pane, target, scroll: true);
     }
 
-    /// <summary>句末标点。英文原文用 . ! ?，中文引文里可能出现全角。</summary>
+    /// <summary>句末标点。英文源文本用 . ! ?，中文引文里可能出现全角。</summary>
     private static bool IsStop(char c) => c is '.' or '!' or '?' or '。' or '！' or '？' or '…';
 
     /// <summary>跟在句末标点后面的收尾引号/括号，算作上一句的一部分。</summary>

@@ -167,7 +167,7 @@ public partial class MainWindow : Window
         if (!hasTrans)
         {
             ShowEmptyTranslation("这个项目还没有译文",
-                                 "不用先有原文 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。");
+                                 "不用先有资料 —— 起个名字就能开始写。译文统一落在项目的 translations 文件夹里。");
             return;
         }
 
@@ -182,10 +182,10 @@ public partial class MainWindow : Window
 
     // ================================================================ 译文：新建 / 收进来 / 切换
     //
-    // 这里只有"译文"，没有"原文"这一说。要参考什么东西，就开一栏资料（只读）。
+    // 这里只有"译文"，没有"源文件"这一说。要参考什么东西，就开一栏资料（只读）。
     // 一条文件是不是"译文"，不靠它放在哪、也不靠它跟谁同名 —— 靠人在这里点了"新建"或"收进来"。
 
-    /// <summary>新建一篇译文。空项目里也能按 —— 不需要先有原文。</summary>
+    /// <summary>新建一篇译文。空项目里也能按 —— 不需要先有资料文件。</summary>
     private void OnNewTranslation(object sender, RoutedEventArgs e)
     {
         if (_store == null) { Warn("还没有项目", "先从「文件 → 新建项目 / 打开项目」开始。"); return; }
@@ -229,7 +229,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 打开任何文件当一栏资料：只读、不复制、不进清单、不动译文栏。
-    /// 这里不判断"这是原文还是译文" —— 软件没资格判，你也可能放进来一份跟这本书无关的东西。
+    /// 这里不判断"这是资料还是译文" —— 软件没资格判，你也可能放进来一份跟这本书无关的东西。
     /// </summary>
     private void OnOpenRefFile(object sender, RoutedEventArgs e)
     {
@@ -679,7 +679,7 @@ public partial class MainWindow : Window
 
         ShowEmptyTranslation("还没有项目",
                              "先「文件 → 新建项目」，选一个文件夹当项目根。\n" +
-                             "建好之后这一栏就能直接写第一篇译文 —— 不用先找原文，也不用先建 .md。");
+                             "建好之后这一栏就能直接写第一篇译文 —— 不用先找资料，也不用先建 .md。");
 
         RefreshPanes();
         if (_previewing) RefreshPreview();
@@ -699,7 +699,7 @@ public partial class MainWindow : Window
             "  backups\\        每天第一次保存前的上一版\n" +
             "  .yitai\\         程序自己用，别管它\n\n" +
             "为什么译文必须统一在一个文件夹：这样「第几章」只是文件名，\n" +
-            "软件不用猜哪份是原文、哪份是译文 —— 你放进来当资料的一律只读。\n\n" +
+            "软件不用猜哪份是资料、哪份是译文 —— 你放进来当资料的一律只读。\n\n" +
             "为什么用文件夹而不是一个文件：译文得是能单独打开的 md，\n" +
             "能被别的编辑器、git、排版流程直接用；塞进一个二进制里就谁也读不了。",
             "项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -708,7 +708,7 @@ public partial class MainWindow : Window
     private void OnAbout(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(this,
-            "译台 / YiTai\n\n左原文、右译文的最小翻译工作台。\n" +
+            "译台 / YiTai\n\n左资料、右译文的最小翻译工作台。\n" +
             "MIT 许可，源码可读可改。\n\n" +
             "快捷键：Ctrl+S 保存 · Ctrl+N 新建项目 · Ctrl+O 打开项目",
             "关于译台", MessageBoxButton.OK, MessageBoxImage.Information);

@@ -3,7 +3,7 @@
 // ============================================================
 //
 // 刻意写得"笨"：按行扫一遍，认几种前缀，不做完整的 CommonMark。
-// 理由跟 README 一个口径：这是给人看原文/对照用的，认错了顶多难看，
+// 理由跟 README 一个口径：这是给人看资料/对照用的，认错了顶多难看，
 // 不该出现"解析器自己崩了、稿子读不出来"这种事。所以：
 //   · 任何没闭合的标记都当普通文字（不会吃掉后面的正文）
 //   · 代码块没闭合，到文末就按代码块收尾（内容不丢）
@@ -35,7 +35,7 @@ public static class MdParser
         bool inCode = false;
         MdBlock? list = null;
 
-        // 每一块在原文里的起始偏移（"译到哪了"的绿线靠它定位，见 MdBlock.SourceOffset）
+        // 每一块在文档里的起始偏移（"译到哪了"的绿线靠它定位，见 MdBlock.SourceOffset）
         int offset = 0;
         int paraStart = -1;
         int quoteStart = -1;
@@ -48,7 +48,7 @@ public static class MdParser
             var b = new MdBlock { Kind = MdBlockKind.Paragraph, SourceOffset = paraStart };
 
             // 段内的软换行照 Markdown 的规矩拼回去（一个空格），排版与"不标记"时完全一样；
-            // 每一截都带着自己的原文偏移，竖线因此能落在段中间某句话上。
+            // 每一截都带着自己的文档偏移，竖线因此能落在段中间某句话上。
             for (int i = 0; i < paraLines.Count; i++)
             {
                 if (i > 0)
@@ -229,7 +229,7 @@ public static class MdParser
 
     /// <summary>
     /// 解析一段里的粗体/斜体/代码/删除线/链接。认不出的记号原样留着。
-    /// <paramref name="baseOffset"/> 是这段文字在原文里的起点：
+    /// <paramref name="baseOffset"/> 是这段文字在文档里的起点：
     /// 每一截都记下自己的绝对位置，绿线才能落在段落中间的某一句话上。
     /// </summary>
     public static List<MdInline> ParseInlines(string s, int baseOffset = 0)
