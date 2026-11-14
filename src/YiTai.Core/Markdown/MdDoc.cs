@@ -8,8 +8,8 @@
 //   net10.0 纯逻辑，能被单元测试直接跑，也保住了"Core 不知道界面"这条红线。
 //
 // 只覆盖翻译稿里真用得上的语法：标题、段落、粗体、斜体、粗斜、行内代码、
-// 删除线、链接、引用、有序/无序列表、代码块、分隔线。
-// 表格、脚注、HTML 内嵌故意不做 —— 半吊子支持比不支持更让人困惑。
+// 删除线、链接、引用、有序/无序列表、代码块、分隔线、表格（GFM 管道表）。
+// 表格只认 GFM 管道表；脚注、HTML 内嵌、跨行/跨列合并仍不做 —— 半吊子支持比不支持更让人困惑。
 // ============================================================
 
 using System.Collections.Generic;
@@ -24,6 +24,7 @@ public enum MdBlockKind
     Quote = 3,
     List = 4,
     Divider = 5,
+    Table = 6,
 }
 
 public enum MdInlineKind
@@ -72,6 +73,34 @@ public sealed class MdItem
     public List<MdInline> Inlines { get; } = new();
 }
 
+/// <summary>表格某一列的对齐方式。GFM 管道表：分隔行里 `:---` 左、`:---:` 中、`---:` 右。</summary>
+public enum MdColumnAlign
+{
+    Left = 0,
+    Center = 1,
+    Right = 2,
+}
+
+/// <summary>表格里的一个单元格：行内内容照常解析（粗体 / 高亮 / 行内代码都行）。</summary>
+public sealed class MdTableCell
+{
+    public List<MdInline> Inlines { get; } = new();
+}
+
+/// <summary>表格里的一行。首行 IsHeader = true。</summary>
+public sealed class MdTableRow
+{
+    public bool IsHeader { get; set; }
+    public List<MdTableCell> Cells { get; } = new();
+}
+
+/// <summary>一张 GFM 管道表。列数由 Aligns 决定，行数与每行单元格数已对齐成一样多。</summary>
+public sealed class MdTable
+{
+    public List<MdColumnAlign> Aligns { get; } = new();
+    public List<MdTableRow> Rows { get; } = new();
+}
+
 /// <summary>
 /// 段落里的一行原始文本。
 /// 只给解析器内部用：把一段的多行拼回去（Markdown 的软换行语义），
@@ -114,6 +143,9 @@ public sealed class MdBlock
 
     /// <summary>列表项（只有 List 块用）。</summary>
     public List<MdItem> Items { get; } = new();
+
+    /// <summary>表格（只有 Table 块用）。</summary>
+    public MdTable? Table { get; set; }
 }
 
 /// <summary>一整篇解析结果。顺序就是文档顺序。</summary>

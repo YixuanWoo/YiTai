@@ -431,6 +431,60 @@ orphan.Files["没见过.md"] = 100;
 var (mig3, held3) = ProgressStore.Migrate(p11, orphan, new[] { absA, absB });
 Check("对不上任何文件时不动它", mig3 == 0 && held3 == 1, mig3 + "/" + held3);
 
+// ============================================================ 13. 表格（GFM 管道表）
+Console.WriteLine("\n== 13. 表格（GFM 管道表） ==");
+
+// 13.1 基本表：表头 + 分隔行 + 两行数据
+var md1 = MdParser.Parse("| 词 | 译法 |\n| --- | --- |\n| apple | 苹果 |\n| book | 书 |\n");
+Check("基本表：1 个表格块", md1.Blocks.Count == 1 && md1.Blocks[0].Kind == MdBlockKind.Table,
+      md1.Blocks.Count.ToString() + "/" + md1.Blocks[0].Kind);
+var mt1 = md1.Blocks[0].Table!;
+Check("基本表：2 列", mt1.Aligns.Count == 2);
+Check("基本表：3 行（表头 + 2 数据）", mt1.Rows.Count == 3);
+Check("基本表：表头行 IsHeader", mt1.Rows[0].IsHeader);
+Check("基本表：数据行不是表头", !mt1.Rows[1].IsHeader);
+Check("基本表：单元格内容正确", Flat(mt1.Rows[1].Cells[0].Inlines) == "apple");
+
+// 13.2 对齐：:--- 左、:--: 中、---: 右
+var md2 = MdParser.Parse("| a | b | c |\n| :-- | :--: | --: |\n| 1 | 2 | 3 |\n");
+var mt2 = md2.Blocks[0].Table!;
+Check("对齐：左中右", mt2.Aligns[0] == MdColumnAlign.Left && mt2.Aligns[1] == MdColumnAlign.Center
+      && mt2.Aligns[2] == MdColumnAlign.Right);
+
+// 13.3 没有分隔行 → 不是表格，是普通段落
+var md3 = MdParser.Parse("| a | b |\n| c | d |\n");
+Check("无分隔行：不认成表格", md3.Blocks.Count == 1 && md3.Blocks[0].Kind == MdBlockKind.Paragraph,
+      md3.Blocks[0].Kind.ToString());
+
+// 13.4 单列表格（表头、分隔、数据都带竖线）照认
+var md4 = MdParser.Parse("| foo |\n| --- |\n| x |\n");
+Check("单列表格：1 列", md4.Blocks[0].Kind == MdBlockKind.Table && md4.Blocks[0].Table!.Aligns.Count == 1,
+      md4.Blocks[0].Kind.ToString());
+
+// 13.5 转义的竖线不算分隔
+var md5 = MdParser.Parse("| a\\|b | c |\n| --- | --- |\n| 1 | 2 |\n");
+var mt5 = md5.Blocks[0].Table!;
+Check("转义竖线：第一格内容含竖线", Flat(mt5.Rows[0].Cells[0].Inlines) == "a|b",
+      Flat(mt5.Rows[0].Cells[0].Inlines));
+
+// 13.6 列数不齐：表头多出的丢弃，数据行缺的补空
+var md6 = MdParser.Parse("| a | b | c |\n| --- | --- |\n| 1 |\n");
+var mt6 = md6.Blocks[0].Table!;
+Check("列数：按分隔行 2 列", mt6.Aligns.Count == 2);
+Check("表头多出的列被丢", Flat(mt6.Rows[0].Cells[1].Inlines) == "b");
+Check("数据行缺的列补空", mt6.Rows[1].Cells[1].Inlines.Count == 0);
+
+// 13.7 单元格里的粗体 / ==高亮== 照常解析
+var md7 = MdParser.Parse("| a | b |\n| --- | --- |\n| **粗** | ==亮== |\n");
+var mt7 = md7.Blocks[0].Table!;
+Check("单元格粗体", CountKind(mt7.Rows[1].Cells[0].Inlines, MdInlineKind.Bold) == 1);
+Check("单元格高亮", CountKind(mt7.Rows[1].Cells[1].Inlines, MdInlineKind.Highlight) == 1);
+
+// 13.8 表格后跟普通段落：表格结束于空行
+var md8 = MdParser.Parse("| a |\n| --- |\n| 1 |\n\n后面的段落\n");
+Check("表格后接段落：两块", md8.Blocks.Count == 2);
+Check("第二块是段落", md8.Blocks[1].Kind == MdBlockKind.Paragraph);
+
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
 

@@ -72,6 +72,9 @@ public partial class MainWindow
 
         public Canvas? LineLayer;
 
+        /// <summary>这一栏文档里所有表格宿主（内层文档），布局后据此设页宽。</summary>
+        public List<MdRender.TableHostInfo> TableHosts = new();
+
         /// <summary>
         /// 这一栏现在显示的是真文件（不是"还没打开项目"这类提示语），
         /// 并且能点出"译到这里"。资料、译文、导入的 md/txt/pdf 都算。
@@ -1042,6 +1045,9 @@ public partial class MainWindow
             pane.Body.Document = MdRender.Message(text, style);
         }
 
+        // 表格宿主：布局后要按"栏够不够宽"决定是撑满还是出横向滚动条
+        pane.TableHosts = MdRender.ExtractTableHosts(pane.Body.Document);
+
         if (pane.Caption != null)
         {
             pane.BaseCaption = note;
@@ -1055,10 +1061,30 @@ public partial class MainWindow
         // 排到布局完成之后（Loaded 优先级）再补算一次 ——
         // 原先这件事是靠每帧都跑的 LayoutUpdated 兜的，那等于让程序一直空转。
         Dispatcher.BeginInvoke(
-            new Action(() => UpdateMarkerVisual(pane)),
+            new Action(() => { UpdateMarkerVisual(pane); UpdateTablePageWidths(pane); }),
             System.Windows.Threading.DispatcherPriority.Loaded);
 
         Diag.AddRefresh(t0, _panes.Count, text.Length);
+    }
+
+    /// <summary>
+    /// 表格页宽：栏够宽就撑满，不够宽就按表格自然宽度，横向滚动条自己出来。
+    /// 只在换文档 / 改栏宽 / 缩放后调 —— 设 PageWidth 不会反向改栏宽，不会形成布局死循环。
+    /// </summary>
+    private void UpdateTablePageWidths(PaneView pane)
+    {
+        if (pane.Body?.Document == null) return;
+
+        var doc = pane.Body.Document;
+        double avail = Math.Max(0,
+            pane.Body.ActualWidth - doc.PagePadding.Left - doc.PagePadding.Right - 2);
+
+        foreach (var info in pane.TableHosts)
+        {
+            double w = Math.Max(info.NaturalWidth, avail);
+            if (Math.Abs(info.Doc.PageWidth - w) > 0.5)
+                info.Doc.PageWidth = w;
+        }
     }
 
     /// <summary>
@@ -1248,6 +1274,8 @@ public partial class MainWindow
         CodeBg = (Brush)FindResource("BgWrite"),
         CodeFg = (Brush)FindResource("TextDim"),
         QuoteLine = (Brush)FindResource("Line"),
+        TableBorder = (Brush)FindResource("Line"),
+        TableHeaderBg = (Brush)FindResource("BgCardAlt"),
         FontSize = fontSize,
         LineSpacing = lineSpacing,
     };

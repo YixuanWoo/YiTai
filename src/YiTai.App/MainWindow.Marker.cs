@@ -117,7 +117,11 @@ public partial class MainWindow
         body.PreviewMouseRightButtonUp += (_, e) => OnPaneMouseRightUp(pane, e);
 
         // 栏宽变了，文字重新折行，线的位置也得重算
-        body.SizeChanged += (_, _) => UpdateMarkerVisual(pane);
+        body.SizeChanged += (_, _) =>
+        {
+            UpdateMarkerVisual(pane);
+            UpdateTablePageWidths(pane);
+        };
 
         // 这里原本挂着 LayoutUpdated，每完成一轮布局就重算一次线的位置。
         // 那是个死循环：UpdateMarkerVisual 会改线的可见性和高度，
@@ -134,6 +138,7 @@ public partial class MainWindow
                 sv.ScrollChanged += (_, _) => UpdateMarkerVisual(pane);
 
             UpdateMarkerVisual(pane);
+            UpdateTablePageWidths(pane);
         };
     }
 
@@ -328,8 +333,10 @@ public partial class MainWindow
             return runStart + Math.Max(0, delta);
         }
 
-        // 落在段落空白、行首行尾：退回这一块（=这一行）的起点
+        // 落在段落空白、行首行尾：退回这一块（=这一行）的起点。
+        // 但表格是 BlockUIContainer（拿不到字坐标，跟 PDF 一样），点它不落线。
         var block = TaggedBlockAt(pos);
+        if (block is BlockUIContainer) return -1;
         return block?.Tag is int offset ? offset : -1;
     }
 

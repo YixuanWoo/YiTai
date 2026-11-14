@@ -94,8 +94,9 @@ public static class MdParser
             codeStart = -1;
         }
 
-        foreach (string rawLine in lines)
+        for (int li = 0; li < lines.Length; li++)
         {
+            string rawLine = lines[li];
             int lineStart = offset;
             offset += rawLine.Length + 1;   // +1 是那一行结尾的 \n
 
@@ -198,6 +199,19 @@ public static class MdParser
                 item.Inlines.AddRange(ParseInlines(itemText, lineStart + Math.Max(0, at)));
                 list.Items.Add(item);
                 continue;
+            }
+
+            // -------------------------------------------------- 表格（GFM 管道表）
+            // 表头行 + 分隔行（下一行整行是 :---: 之类）才算表格；行里没有竖线就不是。
+            // 只在段落还没开始的时候认：竖线在普通段落里不该把整段吃掉。
+            if (paraLines.Count == 0)
+            {
+                if (TryParseTable(lines, ref li, lineStart, out var tableBlock))
+                {
+                    list = null;
+                    doc.Blocks.Add(tableBlock);
+                    continue;
+                }
             }
 
             // -------------------------------------------------- 普通段落
@@ -433,6 +447,131 @@ public static class MdParser
         if (n < 1 || n > 6) return 0;
         if (n == trim.Length) return n;
         return trim[n] == ' ' ? n : 0;
+    }
+
+    // ==================================================================== 表格（GFM 管道表）
+
+    /// <summary>
+    /// 当前行是表头、下一行是分隔行（:---: 之类）→ 把整张表吃掉，<paramref name="li"/> 停在最后一行。
+    /// 列数由分隔行决定；表头/数据行里多出来的单元格丢弃，缺的补空。
+    /// 不是表格就原样返回 false，一个字符都不碰。
+    /// </summary>
+    private static bool TryParseTable(string[] lines, ref int li, int headerStart, out MdBlock block)
+    {
+        block = new MdBlock();
+
+        if (li + 1 >= lines.Length) return false;
+        if (!HasTablePipe(lines[li]) || !HasTablePipe(lines[li + 1])) return false;
+
+        var headerCells = SplitRow(lines[li]);
+        if (headerCells.Count == 0) return false;
+        if (!TryParseDelimiter(lines[li + 1], out var aligns)) return false;
+
+        int cols = aligns.Count;
+        var table = new MdTable();
+        table.Aligns.AddRange(aligns);
+
+        table.Rows.Add(MakeRow(headerCells, cols, isHeader: true, headerStart));
+
+        int rowStart = headerStart + lines[li].Length + 1 + lines[li + 1].Length + 1;
+        int i = li + 2;
+
+        while (i < lines.Length)
+        {
+            string raw = lines[i];
+            if (raw.Trim().Length == 0) break;     // 空行 = 表格结束
+            if (!HasTablePipe(raw)) break;         // 没有竖线的行 = 表格结束
+
+            table.Rows.Add(MakeRow(SplitRow(raw), cols, isHeader: false, rowStart));
+            rowStart += raw.Length + 1;
+            i++;
+        }
+
+        block.Kind = MdBlockKind.Table;
+        block.SourceOffset = headerStart;
+        block.Table = table;
+
+        li = i - 1;   // 外层 for 的 li++ 之后，正好指向表格后面的那一行
+        return true;
+    }
+
+    private static MdTableRow MakeRow(List<string> cells, int cols, bool isHeader, int rowStart)
+    {
+        var row = new MdTableRow { IsHeader = isHeader };
+        for (int c = 0; c < cols; c++)
+        {
+            string text = c < cells.Count ? cells[c] : "";
+
+            var cell = new MdTableCell();
+            // 表格渲染成 BlockUIContainer，绿线进不到单元格里，这里偏移只求不空、不精算。
+            cell.Inlines.AddRange(ParseInlines(text, rowStart));
+            row.Cells.Add(cell);
+        }
+        return row;
+    }
+
+    /// <summary>把一行按竖线切成单元格：`\|` 与代码跨里的 `|` 不算分隔；首尾的空单元格去掉。</summary>
+    private static List<string> SplitRow(string line)
+    {
+        string s = line.Trim();
+        var cells = new List<string>();
+        var sb = new StringBuilder();
+        bool inCode = false;
+
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+
+            if (c == '`') { inCode = !inCode; sb.Append(c); }
+            else if (c == '\\' && i + 1 < s.Length && s[i + 1] == '|') { sb.Append('|'); i++; }
+            else if (c == '|' && !inCode) { cells.Add(sb.ToString().Trim()); sb.Clear(); }
+            else sb.Append(c);
+        }
+        cells.Add(sb.ToString().Trim());
+
+        if (cells.Count > 1 && s.StartsWith("|", StringComparison.Ordinal)) cells.RemoveAt(0);
+        if (cells.Count > 1 && s.EndsWith("|", StringComparison.Ordinal)) cells.RemoveAt(cells.Count - 1);
+
+        return cells;
+    }
+
+    /// <summary>行里有没有一个"真分隔竖线"（不含 `\|` 转义、不含代码跨里的）。</summary>
+    private static bool HasTablePipe(string line)
+    {
+        bool inCode = false;
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c == '`') inCode = !inCode;
+            else if (c == '\\' && i + 1 < line.Length && line[i + 1] == '|') i++;
+            else if (c == '|' && !inCode) return true;
+        }
+        return false;
+    }
+
+    /// <summary>分隔行（:---: 之类）。列数与对齐都从这里定。</summary>
+    private static bool TryParseDelimiter(string line, out List<MdColumnAlign> aligns)
+    {
+        aligns = new List<MdColumnAlign>();
+
+        foreach (string raw in SplitRow(line))
+        {
+            string t = raw.Trim();
+            if (t.Length == 0) return false;
+
+            bool left = t.StartsWith(":", StringComparison.Ordinal);
+            bool right = t.EndsWith(":", StringComparison.Ordinal);
+            string mid = t.Trim(':');
+
+            if (mid.Length == 0) return false;
+            foreach (char ch in mid) if (ch != '-') return false;   // 必须全是 -
+
+            aligns.Add(left && right ? MdColumnAlign.Center
+                      : right ? MdColumnAlign.Right
+                      : MdColumnAlign.Left);
+        }
+
+        return aligns.Count > 0;
     }
 
     /// <summary>--- / *** / ___ （至少三个同样的符号，中间允许空格）。</summary>

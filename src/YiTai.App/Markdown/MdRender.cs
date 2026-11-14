@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using YiTai.Core;
@@ -43,6 +44,10 @@ public sealed class MdStyle
     /// 压到淡红（#FFD6D6），深色正文压在上面才看得清；再深就像一条报错横幅了。
     /// </summary>
     public Brush Mark = MarkBrush;
+
+    /// <summary>表格网格线 / 表头底色。由界面从主题里取。</summary>
+    public Brush TableBorder = Brushes.LightGray;
+    public Brush TableHeaderBg = Brushes.WhiteSmoke;
 
     private static readonly Brush MarkBrush = CreateMarkBrush();
 
@@ -189,6 +194,10 @@ public static class MdRender
 
             case MdBlockKind.Divider:
                 b = Divider(st);
+                break;
+
+            case MdBlockKind.Table:
+                b = TableBlock(block, st);
                 break;
 
             default:
@@ -395,6 +404,119 @@ public static class MdRender
             Margin = new Thickness(0, st.FontSize * 0.6, 0, st.FontSize * 0.7),
         };
         return new BlockUIContainer(rule);
+    }
+
+    // ---------------------------------------------------------------- 表格（GFM 管道表）
+
+    /// <summary>
+    /// 表格不是文档里的普通块，而是塞进一个 BlockUIContainer：
+    /// 里面再放一个 FlowDocumentScrollViewer（只读、可选中），横向滚动条在表格底下。
+    /// 这样宽表不会被栏宽挤成一列单字 —— 拖它自己的滚动条看全。
+    /// </summary>
+    private static BlockUIContainer TableBlock(MdBlock block, MdStyle st)
+    {
+        var table = block.Table!;
+        var inner = new FlowDocument
+        {
+            PagePadding = new Thickness(0),
+            ColumnWidth = double.PositiveInfinity,
+            ColumnGap = 0,
+            FontFamily = st.Body,
+            FontSize = st.FontSize,
+            Foreground = st.Text,
+            LineHeight = st.FontSize * 1.45,
+        };
+
+        int cols = table.Aligns.Count;
+        var t = new Table { CellSpacing = 0, Margin = new Thickness(0) };
+        for (int c = 0; c < cols; c++)
+            t.Columns.Add(new TableColumn { Width = GridLength.Auto });
+
+        var group = new TableRowGroup();
+        for (int r = 0; r < table.Rows.Count; r++)
+        {
+            var row = table.Rows[r];
+            var tr = new TableRow();
+
+            for (int c = 0; c < cols; c++)
+            {
+                var cell = row.Cells[c];
+                var p = new Paragraph
+                {
+                    Margin = new Thickness(0),
+                    LineHeight = st.FontSize * 1.45,
+                    TextAlignment = AlignmentOf(table.Aligns[c]),
+                };
+                if (row.IsHeader) p.FontWeight = FontWeights.Bold;
+                AppendInlines(p, cell.Inlines, st);
+
+                var tc = new TableCell
+                {
+                    BorderBrush = st.TableBorder,
+                    // 只画右、下两条线，网格线不叠成 2px；最右/最下一列由外层边框补上
+                    BorderThickness = new Thickness(0, 0, c < cols - 1 ? 1 : 0, r < table.Rows.Count - 1 ? 1 : 0),
+                    Padding = new Thickness(8, 4, 8, 4),
+                };
+                if (row.IsHeader) tc.Background = st.TableHeaderBg;
+                tc.Blocks.Add(p);
+                tr.Cells.Add(tc);
+            }
+            group.Rows.Add(tr);
+        }
+        t.RowGroups.Add(group);
+        inner.Blocks.Add(t);
+
+        var viewer = new FlowDocumentScrollViewer
+        {
+            Document = inner,
+            IsSelectionEnabled = true,
+            IsToolBarVisible = false,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+        };
+
+        // 量一次自然宽度：栏够宽就按内容自然宽度，不够宽就让 viewer 出横向滚动条。
+        // 上限挡一下"一个单元格塞了上千字没断行"的极端情况，免得横向滚动条拖出天际。
+        viewer.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double natural = Math.Min(viewer.DesiredSize.Width, 3000);
+
+        var outer = new Border
+        {
+            BorderBrush = st.TableBorder,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, st.FontSize * 0.4, 0, st.FontSize * 0.7),
+            Child = viewer,
+        };
+        outer.Tag = new TableHostInfo { Doc = inner, NaturalWidth = natural };
+
+        return new BlockUIContainer(outer);
+    }
+
+    private static TextAlignment AlignmentOf(MdColumnAlign a) => a switch
+    {
+        MdColumnAlign.Center => TextAlignment.Center,
+        MdColumnAlign.Right => TextAlignment.Right,
+        _ => TextAlignment.Left,
+    };
+
+    /// <summary>表格宿主信息：内层文档 + 它按内容量出来的自然宽度。由界面在布局后决定最终页宽。</summary>
+    public sealed class TableHostInfo
+    {
+        public FlowDocument Doc = null!;
+        public double NaturalWidth;
+    }
+
+    /// <summary>把这篇文档里所有的表格宿主（内层文档）收集起来，供界面设置页宽用。</summary>
+    public static List<TableHostInfo> ExtractTableHosts(FlowDocument doc)
+    {
+        var list = new List<TableHostInfo>();
+        foreach (Block b in doc.Blocks)
+            if (b is BlockUIContainer c && c.Child is Border bd && bd.Tag is TableHostInfo info)
+                list.Add(info);
+        return list;
     }
 
     // ==================================================================== 行内
