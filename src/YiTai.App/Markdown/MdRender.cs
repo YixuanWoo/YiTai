@@ -263,6 +263,196 @@ public static class MdRender
         }
     }
 
+    /// <summary>
+    /// 文档里所有 ==高亮== 区间的源偏移（[Start, End)）。
+    /// 进度高亮的底带碰到它们要让路：两片半透明色叠在一起会脏，改成只画下划线。
+    /// </summary>
+    public static List<(int Start, int End)> HighlightRanges(FlowDocument doc)
+    {
+        var list = new List<(int, int)>();
+
+        foreach (Run run in AllRuns(doc))
+        {
+            if (run.Tag is not int start) continue;
+
+            DependencyObject? cur = run.Parent;
+            while (cur is Span span)
+            {
+                if ((span.Tag as string) == "hl")
+                {
+                    list.Add((start, start + run.Text.Length));
+                    break;
+                }
+
+                cur = span.Parent;
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// 一段源文字（[start, end)）在文档里排成了哪几段矩形：**一个视觉行一段**。
+    ///
+    /// 为什么必须按视觉行切：一句常常折成两三行。只在句首画一根线、或者拿一个整块矩形一罩，
+    /// 都会横穿行尾的空白、盖到旁边的段落上去。
+    ///
+    /// 坐标是 RichTextBox 视口那套（与叠在上面的浮层 Canvas 同一套），
+    /// 所以滚动之后要重算 —— 调用方在 ScrollChanged 里刷。
+    /// </summary>
+    public static List<Rect> RectSegments(FlowDocument doc, int start, int end)
+    {
+        var list = new List<Rect>();
+
+        var p0 = PointerAtOffset(doc, start);
+        if (p0 == null) return list;
+
+        var p1 = end > start ? PointerAtOffset(doc, end) : null;
+
+        // 结尾对不上（源文末尾的语法符号没排出来、或这一句跨到了表格里）：
+        // 只画句首一个字，不硬撑到文末。
+        if (p1 == null)
+        {
+            Rect one = p0.GetCharacterRect(LogicalDirection.Forward);
+            if (!one.IsEmpty && one.Height >= 4) list.Add(one);
+            return list;
+        }
+
+        TextPointer? p = p0;
+
+        for (int guard = 0; guard < 60 && p != null; guard++)
+        {
+            Rect r0 = p.GetCharacterRect(LogicalDirection.Forward);
+            if (r0.IsEmpty || r0.Height < 4)
+            {
+                p = p.GetLineStartPosition(1);
+                continue;
+            }
+
+            TextPointer? next = p.GetLineStartPosition(1);
+            TextPointer segEnd = (next != null && next.CompareTo(p1) < 0) ? next : p1;
+
+            Rect re = segEnd.GetCharacterRect(LogicalDirection.Backward);
+            double right = (re.IsEmpty || re.Height < 4) ? r0.X + Math.Max(4, r0.Width) : re.X + re.Width;
+
+            double left = r0.X;
+            if (right <= left) right = left + 6;
+
+            list.Add(new Rect(left, r0.Y, right - left, r0.Height));
+
+            if (segEnd.CompareTo(p1) >= 0) break;
+            p = next;
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// 在**渲染结果**上切句，返回的区间是文档偏移（Run.Tag 那套坐标）。
+    ///
+    /// 为什么不在原文件上切：Markdown 会吃掉 `#`、`**`、`|` 这些符号，
+    /// 同一个字在原文里和在文档里的偏移不是同一个数 —— 按原文切出来的句子
+    /// 落到文档里就会一行比一行偏。所以把排出来的文字重新拼一遍再切，
+    /// 切完按 Run 的 Tag 换算回文档偏移。
+    /// </summary>
+    public static SentenceIndex SentenceIndexFor(FlowDocument doc)
+    {
+        var sb = new System.Text.StringBuilder();
+        var map = new List<(int ConStart, int TagStart, int Len)>();
+
+        void AppendParagraph(Paragraph p)
+        {
+            foreach (Run run in RunsIn(p.Inlines))
+            {
+                if (run.Tag is not int tag) continue;
+                if (run.Text.Length == 0) continue;
+
+                map.Add((sb.Length, tag, run.Text.Length));
+                sb.Append(run.Text);
+            }
+
+            sb.Append("\n\n");   // 段与段之间是硬边界
+        }
+
+        foreach (Block b in doc.Blocks)
+        {
+            if (b is Paragraph p)
+            {
+                AppendParagraph(p);
+            }
+            else if (b is List l)
+            {
+                foreach (ListItem li in l.ListItems)
+                    foreach (Block ib in li.Blocks)
+                        if (ib is Paragraph lp) AppendParagraph(lp);
+            }
+            else if (b is BlockUIContainer)
+            {
+                sb.Append("\n\n");   // 表格：整块当边界，不参与切句
+            }
+        }
+
+        var raw = SentenceIndex.FromPlain(sb.ToString());
+        var spans = new List<(int Start, int End)>();
+
+        for (int i = 0; i < raw.Count; i++)
+        {
+            int a = ConToTag(map, raw.At(i).Start, isEnd: false);
+            int b = ConToTag(map, raw.At(i).End, isEnd: true);
+            if (b > a) spans.Add((a, b));
+        }
+
+        return SentenceIndex.FromSpans(spans);
+    }
+
+    /// <summary>拼接文本里的位置 → 文档偏移（Run.Tag）。落在段间分隔符上就贴到最近的 Run。</summary>
+    private static int ConToTag(List<(int ConStart, int TagStart, int Len)> map, int pos, bool isEnd)
+    {
+        int p = isEnd && pos > 0 ? pos - 1 : pos;
+
+        foreach (var e in map)
+            if (p >= e.ConStart && p < e.ConStart + e.Len)
+                return e.TagStart + (p - e.ConStart) + (isEnd ? 1 : 0);
+
+        if (isEnd)
+        {
+            int last = -1;
+            for (int i = 0; i < map.Count; i++)
+                if (map[i].ConStart <= p) last = i;
+
+            return last < 0 ? 0 : map[last].TagStart + map[last].Len;
+        }
+
+        foreach (var e in map)
+            if (e.ConStart > p) return e.TagStart;
+
+        return map.Count > 0 ? map[map.Count - 1].TagStart + map[map.Count - 1].Len : 0;
+    }
+
+    /// <summary>
+    /// 文档偏移之前有多少个非空白字。
+    /// 底栏的"译到 X/Y 字（Z%）"要用它 ——
+    /// 不能拿原文件去 Substring：Markdown 的偏移跟原文字符位置不是一套。
+    /// </summary>
+    public static int CountCharsBefore(FlowDocument doc, int tagOffset)
+    {
+        int n = 0;
+
+        foreach (Run run in AllRuns(doc))
+        {
+            if (run.Tag is not int start) continue;
+            if (tagOffset <= start) break;
+
+            string t = run.Text;
+            int take = Math.Min(t.Length, tagOffset - start);
+
+            for (int i = 0; i < take; i++)
+                if (!char.IsWhiteSpace(t[i])) n++;
+        }
+
+        return n;
+    }
+
     private static IEnumerable<Run> RunsIn(InlineCollection inlines)
     {
         foreach (Inline inl in inlines)
@@ -639,7 +829,7 @@ public static class MdRender
                 case MdInlineKind.Highlight:
                 {
                     // 只给底色，不动字重字号 —— 高亮是"标出来"，不是"喊出来"
-                    var span = new Span { Background = st.Mark };
+                    var span = new Span { Background = st.Mark, Tag = "hl" };
                     span.Inlines.Add(MakeRun(inl));
                     target.Add(span);
                     break;

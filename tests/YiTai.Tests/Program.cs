@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using YiTai.Core;
 
@@ -485,8 +486,229 @@ var md8 = MdParser.Parse("| a |\n| --- |\n| 1 |\n\n后面的段落\n");
 Check("表格后接段落：两块", md8.Blocks.Count == 2);
 Check("第二块是段落", md8.Blocks[1].Kind == MdBlockKind.Paragraph);
 
+// ============================================================
+// 14. 句子切分（进度高亮用）
+// ============================================================
+Console.WriteLine();
+Console.WriteLine("== 14. 句子切分 ==");
+
+// 14.1 基本：三句
+var si1 = SentenceIndex.FromPlain("One. Two! Three? ");
+Check("基本：切成 3 句", si1.Count == 3, si1.Count.ToString());
+Check("基本：第一句是 One.", si1.Count > 0 && "One. Two! Three? ".Substring(si1.At(0).Start, si1.At(0).Length) == "One.");
+Check("基本：第三句是 Three?", si1.Count > 2 && "One. Two! Three? ".Substring(si1.At(2).Start, si1.At(2).Length) == "Three?");
+
+// 14.2 Mr. / Dr. 不切
+var si2 = SentenceIndex.FromPlain("Mr. Smith went home. He slept.");
+Check("缩写：Mr. 不切", si2.Count == 2, si2.Count.ToString());
+Check("缩写：第二句从 He 起", si2.Count > 1 && "Mr. Smith went home. He slept.".Substring(si2.At(1).Start).StartsWith("He"));
+
+// 14.3 e.g. / U.S. 不切
+var si3 = SentenceIndex.FromPlain("Use e.g. this one. The U.S. Army came.");
+Check("e.g. 不切", si3.Count == 2, si3.Count.ToString());
+Check("U.S. 不切", si3.At(1).Start > 0 && "Use e.g. this one. The U.S. Army came.".Substring(si3.At(1).Start).StartsWith("The U.S."), si3.Count.ToString());
+
+// 14.4 小数点不切
+var si4 = SentenceIndex.FromPlain("It is 3.5 meters. Fine.");
+Check("小数点：不切 3.5", si4.Count == 2, si4.Count.ToString());
+
+// 14.5 省略号算一个句末
+var si5 = SentenceIndex.FromPlain("Wait... then go. Done.");
+Check("省略号：切 3 句", si5.Count == 3, si5.Count.ToString());
+Check("省略号：第一句到 ... 为止", si5.Count > 0 && "Wait... then go. Done.".Substring(si5.At(0).Start, si5.At(0).Length) == "Wait...");
+var si5b = SentenceIndex.FromPlain("等等……然后走。完了。");
+Check("省略号：中文 3 句", si5b.Count == 3, si5b.Count.ToString());
+
+// 14.6 收尾引号归上一句
+var si6 = SentenceIndex.FromPlain("He said \"Hi!\" Then left.");
+Check("引号：切 2 句", si6.Count == 2, si6.Count.ToString());
+Check("引号：问号留在上一句", si6.Count > 0 && "He said \"Hi!\" Then left.".Substring(si6.At(0).Start, si6.At(0).Length) == "He said \"Hi!\"");
+
+// 14.7 中文标点
+var si7 = SentenceIndex.FromPlain("你好。世界！再见？");
+Check("中文：3 句", si7.Count == 3, si7.Count.ToString());
+
+// 14.8 空行硬边界
+var si8 = SentenceIndex.FromPlain("abc\n\ndef");
+Check("空行：2 句", si8.Count == 2, si8.Count.ToString());
+
+// 14.9 标题行行尾就是边界
+var si9 = SentenceIndex.FromPlain("# Title\nBody text.");
+Check("标题：2 句", si9.Count == 2, si9.Count.ToString());
+
+// 14.10 代码块整块一句
+var si10 = SentenceIndex.FromPlain("```\na. b. c.\n```\nDone.");
+Check("代码块：2 句（整块 + Done）", si10.Count == 2, si10.Count.ToString());
+
+// 14.11 吸附与前后查找
+var si11 = SentenceIndex.FromPlain("One. Two. Three.");
+Check("吸附：句中偏移落到句首", si11.StartOf(2) == si11.At(0).Start);
+Check("吸附：第二句内偏移", si11.StartOf(si11.At(1).Start + 1) == si11.At(1).Start);
+Check("下一句", si11.NextStart(0) == si11.At(1).Start);
+Check("上一句", si11.PrevStart(si11.At(2).Start) == si11.At(1).Start);
+Check("最后一句没有下一句", si11.NextStart(si11.At(2).Start) == -1);
+Check("第一句没有上一句（回 0）", si11.PrevStart(0) == si11.At(0).Start);
+
+// 14.12 空文本
+var si12 = SentenceIndex.FromPlain("");
+Check("空文本：0 句", si12.Count == 0, si12.Count.ToString());
+
+// 14.13 用现成区间建索引（界面在渲染结果上切句时走这条）
+var si13 = SentenceIndex.FromSpans(new[] { (10, 20), (30, 40) });
+Check("FromSpans：2 句", si13.Count == 2, si13.Count.ToString());
+Check("FromSpans：IndexAt(12) → 第 1 句", si13.IndexAt(12) == 0);
+Check("FromSpans：NextStart(12) → 30", si13.NextStart(12) == 30);
+Check("FromSpans：StartOf(35) → 30", si13.StartOf(35) == 30);
+
+// ============================================================
+// 15. 主题里的滚动条口径（表格横滚的两次翻车点，钉成回归测试）
+// ============================================================
+// 为什么测这个：表格横向滚动条被报过两次——
+//   ① 只有 9px 长的一小截（全局 Width=9 是给竖向用的，横向沿用了）
+//   ② 鼠标始终是 I 形光标，点不住滑块（样式没设 Cursor，继承了 RichTextBox 的文本光标）
+// 这两条都在 Theme.xaml 里，是纯静态数据，所以可以直接读文件钉住。
+Console.WriteLine();
+Console.WriteLine("== 15. 滚动条样式（表格横滚） ==");
+
+string? themePath = FindUp("src\\YiTai.App\\Theme.xaml");
+Check("Theme.xaml 找得到", themePath != null, themePath ?? "(没找到，测试可能不在仓库根跑)");
+
+if (themePath != null)
+{
+    var themeRoot = System.Xml.Linq.XDocument.Load(themePath).Root!;
+    var ns = themeRoot.Name.Namespace;
+
+    var sbStyle = themeRoot.Elements(ns + "Style")
+        .FirstOrDefault(s => (string?)s.Attribute("TargetType") == "ScrollBar");
+
+    Check("存在全局 ScrollBar 样式", sbStyle != null);
+
+    if (sbStyle != null)
+    {
+        var setters = sbStyle.Elements(ns + "Setter").ToList();
+
+        var cursor = setters.FirstOrDefault(s => (string?)s.Attribute("Property") == "Cursor");
+        Check("滚动条光标是箭头（不是继承来的 I 形）",
+              cursor != null && (string?)cursor.Attribute("Value") == "Arrow",
+              cursor == null ? "(没设 Cursor)" : (string?)cursor.Attribute("Value"));
+
+        var styleTrig = sbStyle.Elements(ns + "Style.Triggers")
+            .SelectMany(t => t.Elements(ns + "Trigger")).ToList();
+        var horizontal = styleTrig.FirstOrDefault(t => (string?)t.Attribute("Property") == "Orientation"
+                                                       && (string?)t.Attribute("Value") == "Horizontal");
+        Check("有 Orientation=Horizontal 的样式触发器", horizontal != null);
+
+        if (horizontal != null)
+        {
+            var hs = horizontal.Elements(ns + "Setter").ToList();
+
+            var width = hs.FirstOrDefault(s => (string?)s.Attribute("Property") == "Width");
+            Check("横向滚动条宽度回到 Auto（铺满整条轨道）",
+                  width != null && (string?)width.Attribute("Value") == "Auto",
+                  width == null ? "(没设 Width)" : (string?)width.Attribute("Value"));
+
+            var height = hs.FirstOrDefault(s => (string?)s.Attribute("Property") == "Height");
+            int h = height == null ? 0 : int.TryParse((string?)height.Attribute("Value"), out var v) ? v : 0;
+            Check("横向滚动条高度 ≥ 10px（能抓得住）", h >= 10, h.ToString());
+        }
+
+        var tpl = sbStyle.Elements(ns + "Setter")
+            .FirstOrDefault(s => (string?)s.Attribute("Property") == "Template");
+
+        var controlTpl = tpl?.Elements(ns + "Setter.Value")
+            .SelectMany(v => v.Elements(ns + "ControlTemplate")).FirstOrDefault();
+        Check("ScrollBar 模板存在", controlTpl != null);
+
+        if (controlTpl != null)
+        {
+            var tplTrig = controlTpl.Elements(ns + "ControlTemplate.Triggers")
+                .SelectMany(t => t.Elements(ns + "Trigger")).ToList();
+            var horizTrack = tplTrig.FirstOrDefault(t => (string?)t.Attribute("Property") == "Orientation"
+                                                         && (string?)t.Attribute("Value") == "Horizontal");
+            Check("模板里有横向触发器", horizTrack != null);
+
+            if (horizTrack != null)
+            {
+                var track = horizTrack.Elements(ns + "Setter")
+                    .FirstOrDefault(s => (string?)s.Attribute("TargetName") == "PART_Track");
+
+                Check("横向 Track 方向不反转（滑块在左、往右拖）",
+                      track != null && (string?)track.Attribute("Value") == "False",
+                      track == null ? "(没设 PART_Track)" : (string?)track.Attribute("Value"));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 16. 进度高亮的三层图层
+// 为什么测这个：真机上被截图报过一次 —— 段落中间只剩一条细琥珀竖线，整句底带和下划线整片不见。
+// 根因是图层 Canvas 套在浮层 Canvas 里：Canvas 不随父容器自适应，它的 DesiredSize 是 0×0，
+// 再叠 ClipToBounds，整层内容被裁得干净；只有直接挂在浮层上的 3px 起笔标还看得见。
+// 而"撑尺寸"的 EnsureSize 第一版也坏了：新建 Canvas 的 Width 是 double.NaN，
+// `Math.Abs(NaN - w) > 0.5` 恒为假 —— 尺寸一次都没设上。
+// 这两条都是静态就能钉住的规则，所以直接读源码断言，别再靠"我以为画上去了"。
+Console.WriteLine();
+Console.WriteLine("== 16. 进度高亮图层（防“只剩起笔标”） ==");
+
+string? layerPath = FindUp("src\\YiTai.App\\ProgressHighlightLayers.cs");
+Check("ProgressHighlightLayers.cs 找得到", layerPath != null, layerPath ?? "(没找到，测试可能不在仓库根跑)");
+
+string? markerPath = FindUp("src\\YiTai.App\\MainWindow.Marker.cs");
+Check("MainWindow.Marker.cs 找得到", markerPath != null, markerPath ?? "(没找到)");
+
+if (layerPath != null && markerPath != null)
+{
+    string layers = File.ReadAllText(layerPath);
+    string marker = File.ReadAllText(markerPath);
+
+    Check("EnsureSize 先判 IsNaN（NaN 也当“尺寸不对”）",
+          layers.Contains("IsNaN", StringComparison.Ordinal),
+          "否则 NaN 参与比较恒假，尺寸一次都设不上");
+
+    int ensureAt = marker.IndexOf("ProgressHighlightLayers.EnsureSize", StringComparison.Ordinal);
+    int bandAt = marker.IndexOf("ProgressHighlightLayers.SyncBand", StringComparison.Ordinal);
+    int underAt = marker.IndexOf("ProgressHighlightLayers.SyncUnderline", StringComparison.Ordinal);
+
+    Check("画底带之前先撑尺寸",
+          ensureAt >= 0 && bandAt > ensureAt,
+          $"EnsureSize@{ensureAt} / SyncBand@{bandAt}");
+
+    Check("画下划线之前先撑尺寸",
+          ensureAt >= 0 && underAt > ensureAt,
+          $"EnsureSize@{ensureAt} / SyncUnderline@{underAt}");
+
+    // 脉冲：Opacity 上限是 1，写成 1.0 → 1.85 会被裁成 1 → 1，等于没闪
+    int pulseAt = marker.IndexOf("private static void PulseBand", StringComparison.Ordinal);
+    Check("找得到 PulseBand", pulseAt >= 0);
+
+    if (pulseAt >= 0)
+    {
+        string pulseBody = marker.Substring(pulseAt, Math.Min(600, marker.Length - pulseAt));
+        var toMatch = System.Text.RegularExpressions.Regex.Match(pulseBody, @"To\s*=\s*([0-9.]+)");
+        double toVal = toMatch.Success ? double.Parse(toMatch.Groups[1].Value) : -1;
+
+        Check("PulseBand 的亮度目标 ≤1（Opacity 上限就是 1，大于 1 等于不闪）",
+              toVal > 0 && toVal <= 1,
+              $"To={toVal:0.00}");
+    }
+}
+
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
+
+// 从当前目录往上找仓库里的某个文件（测试从仓库根跑，也能从工程目录跑）
+string? FindUp(string rel)
+{
+    var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+
+    for (int i = 0; i < 6 && dir != null; i++, dir = dir.Parent)
+    {
+        string p = Path.Combine(dir.FullName, rel);
+        if (File.Exists(p)) return p;
+    }
+
+    return null;
+}
 
 Console.WriteLine();
 if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");

@@ -72,6 +72,27 @@ public partial class MainWindow
 
         public Canvas? LineLayer;
 
+        /// <summary>当前句的底带（半透明主色，每个视觉行一段）。脉冲动画打在这一层的不透明度上。</summary>
+        public Canvas? BandLayer;
+
+        /// <summary>当前句的下划线（每段下沿 2px 实色）。</summary>
+        public Canvas? UnderlineLayer;
+
+        /// <summary>这一栏切好的句子表。跟底带、推进共用同一份，不会各算各的。</summary>
+        public SentenceIndex? Sentences;
+
+        /// <summary>文档里 ==高亮== 的源偏移区间：底带碰上它们要让路。</summary>
+        public List<(int Start, int End)> HighlightRanges = new();
+
+        /// <summary>栏头那枚"活动栏"实心圆点。</summary>
+        public System.Windows.Shapes.Ellipse? Dot;
+
+        /// <summary>栏头那枚图钉（钉住活动栏）。</summary>
+        public Button? PinButton;
+
+        /// <summary>这一栏现在是不是活动栏（决定底带浓淡、边框颜色）。</summary>
+        public bool Active;
+
         /// <summary>这一栏文档里所有表格宿主（内层文档），布局后据此设页宽。</summary>
         public List<MdRender.TableHostInfo> TableHosts = new();
 
@@ -497,8 +518,26 @@ public partial class MainWindow
         tools.Children.Add(moveRight);
         tools.Children.Add(MiniButton("✕", "关掉这一栏", () => RemovePane(index)));
 
+        var pin = MiniButton("◎", "钉住这一栏（固定活动栏）", () => TogglePin(pane));
+        pin.MinWidth = 22;
+        pane.PinButton = pin;
+        tools.Children.Add(pin);
+
         DockPanel.SetDock(tools, Dock.Right);
         headDock.Children.Add(tools);
+
+        // 活动栏的圆点：鼠标压在哪一栏，哪一栏这里就亮一个实心点
+        var dot = new System.Windows.Shapes.Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Margin = new Thickness(0, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Fill = ProgressBrush,
+            Visibility = Visibility.Collapsed,
+        };
+        pane.Dot = dot;
+        headDock.Children.Add(dot);
 
         var cb = new ComboBox
         {
@@ -648,25 +687,33 @@ public partial class MainWindow
         var line = new System.Windows.Shapes.Rectangle
         {
             Width = MarkerWidth,
-            Fill = MdRender.MarkerLine,
+            Fill = ProgressBrush,
             RadiusX = MarkerWidth / 2,        // 两端收成圆弧，像一根短光棒
             RadiusY = MarkerWidth / 2,
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
-                Color = MarkerColor,
+                Color = ProgressColor,
                 BlurRadius = 7,
                 ShadowDepth = 0,
                 Opacity = 0.55,
             },
         };
 
+        // 三层都浮在正文上面的一层 Canvas 里，z 序：底带 < 下划线 < 起笔标。
+        // 底带画在字上面（12%~14% 的半透明，跟荧光笔一个道理）——
+        // 画在字后面要担心 RichTextBox 模板给不给透明底，画在上面一定看得见。
+        var bandLayer = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
+        var underlineLayer = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
+
         var overlay = new Canvas
         {
             IsHitTestVisible = false,          // 别抢鼠标：点、选、拖还得落在正文上
             ClipToBounds = true,
         };
+        overlay.Children.Add(bandLayer);
+        overlay.Children.Add(underlineLayer);
         overlay.Children.Add(line);
 
         var host = new Grid();
@@ -676,6 +723,8 @@ public partial class MainWindow
         pane.Body = body;
         pane.Line = line;
         pane.LineLayer = overlay;
+        pane.BandLayer = bandLayer;
+        pane.UnderlineLayer = underlineLayer;
 
         // 鼠标停在这一栏上按 Ctrl+滚轮，就是缩放这一栏
         body.PreviewMouseWheel += (_, e) =>
@@ -990,6 +1039,7 @@ public partial class MainWindow
         foreach (var p in _panes) RefreshOne(p);
         BtnAddPane.IsEnabled = _panes.Count < MaxRefPanes;
         RefreshMissingIndicator();   // 状态栏那句"N 个文件不在了"跟着一起更新
+        ApplyActivePane();           // 栏重建之后，把"活动栏"的边框/圆点重新定一遍
     }
 
     private void RefreshOne(PaneView pane)
@@ -1052,11 +1102,17 @@ public partial class MainWindow
         foreach (var info in pane.TableHosts)
             info.Host.SizeChanged += (_, _) => UpdateTablePageWidths(pane);
 
+        // 切句：在**渲染结果**上切（Markdown 的文档偏移 ≠ 原文偏移），
+        // 进度高亮、Ctrl+Alt+X、底栏"第 X/Y 句"共用这一份；
+        // ==高亮== 的区间也取出来，底带碰上它们要让路（改画加深下划线）。
+        pane.Sentences = pane.Markable ? MdRender.SentenceIndexFor(pane.Body.Document) : null;
+        pane.HighlightRanges = MdRender.HighlightRanges(pane.Body.Document);
+
         if (pane.Caption != null)
         {
             pane.BaseCaption = note;
-            pane.PaneText = text;
-            pane.Caption.Text = WithProgress(note, marker, pane.PaneText);
+            pane.PaneText = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            pane.Caption.Text = WithProgress(note, marker, pane.Body.Document, pane.Sentences);
         }
 
         UpdateMarkerVisual(pane);   // 竖线单独一层，改文档不用重画

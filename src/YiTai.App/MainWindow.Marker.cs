@@ -37,10 +37,18 @@ namespace YiTai.App;
 
 public partial class MainWindow
 {
-    /// <summary>竖线宽度。细了看不见，粗了像块膏药。</summary>
+    /// <summary>起笔标宽度。细了看不见，粗了像块膏药。</summary>
     private const double MarkerWidth = 3;
 
-    private static readonly Color MarkerColor = Color.FromRgb(0x3F, 0xB5, 0x66);
+    /// <summary>进度高亮的主色：琥珀。底带用它 14%（非活动栏 8%），下划线/起笔标用实色。</summary>
+    private static Color ProgressColor => ProgressHighlightLayers.Main;
+
+    private static Brush ProgressBrush => ProgressHighlightLayers.MainBrush;
+
+    /// <summary>活动栏（"我现在在翻哪一份"）。鼠标压着哪栏就是哪栏；钉住的优先。</summary>
+    private PaneView? _activePane;
+    private PaneView? _hoverPane;
+    private PaneView? _pinnedPane;
 
     /// <summary>各源文件的进度（文件名 → 字符偏移）。跟随项目打开/关闭。</summary>
     private ProgressState _progress = new();
@@ -89,17 +97,35 @@ public partial class MainWindow
 
     private void OnMarkerKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.Modifiers != (ModifierKeys.Control | ModifierKeys.Shift)) return;
+        var mods = Keyboard.Modifiers;
 
-        if (e.Key == Key.Up)
+        // 进度高亮的两个单手键：左手拇指按住 Ctrl+Alt，食指按 X 推一句 / 按 C 找回。
+        if (mods == (ModifierKeys.Control | ModifierKeys.Alt))
         {
-            StepMarker(-1);
-            e.Handled = true;
+            if (e.Key == Key.X) { StepMarker(+1); e.Handled = true; return; }
+            if (e.Key == Key.C) { CenterOnActivePane(); e.Handled = true; return; }
+
+            if (e.Key is Key.D1 or Key.D2 or Key.D3 or Key.D4)
+            {
+                SwitchToPane((int)e.Key - (int)Key.D1);
+                e.Handled = true;
+            }
+            return;
         }
-        else if (e.Key == Key.Down)
+
+        // 保留：Ctrl+Shift+↑/↓ 手动跳句（找补、回头看）
+        if (mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
-            StepMarker(+1);
-            e.Handled = true;
+            if (e.Key == Key.Up)
+            {
+                StepMarker(-1);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down)
+            {
+                StepMarker(+1);
+                e.Handled = true;
+            }
         }
     }
 
@@ -110,11 +136,25 @@ public partial class MainWindow
         // 若等抬起才撤，双击选词的整个过程里都会多一根线在那儿闪。
         body.PreviewMouseLeftButtonDown += (_, e) =>
         {
+            SetActivePane(pane);
             if (e.ClickCount > 1) UndoLastMark();
         };
 
         body.PreviewMouseLeftButtonUp += (_, e) => OnPaneMouseUp(pane, e);
         body.PreviewMouseRightButtonUp += (_, e) => OnPaneMouseRightUp(pane, e);
+
+        // 鼠标压在哪一栏，哪一栏就是"活动栏" —— 这是多参考文档下最省事的识别方式：
+        // 不用记、不用先点、不会认错，眼睛看到哪就操作哪。
+        body.MouseEnter += (_, _) =>
+        {
+            _hoverPane = pane;
+            ApplyActivePane();
+        };
+        body.MouseLeave += (_, _) =>
+        {
+            if (_hoverPane == pane) _hoverPane = null;
+            ApplyActivePane();
+        };
 
         // 栏宽变了，文字重新折行，线的位置也得重算
         body.SizeChanged += (_, _) =>
@@ -195,6 +235,12 @@ public partial class MainWindow
 
         int offset = OffsetAtPoint(pane, at);
         if (offset < 0) return;                                // 点在栏的空白处
+
+        // 点句子里任何一个字，线都落到这句的句首 ——
+        // 进度高亮标的是"一整句"，线立在句中间会跟底带对不上。
+        if (pane.Sentences != null && pane.Sentences.Count > 0)
+            offset = pane.Sentences.StartOf(offset);
+
         if (offset == CurrentOffset(pane)) return;             // 点在原处，什么都不用做
 
         PlaceMarkNow(pane, offset);
@@ -285,6 +331,9 @@ public partial class MainWindow
 
         int offset = OffsetAtPoint(pane, e.GetPosition(pane.Body));
         if (offset < 0) return;
+
+        if (pane.Sentences != null && pane.Sentences.Count > 0)
+            offset = pane.Sentences.StartOf(offset);
 
         _pendingOffset = offset;
 
@@ -378,7 +427,7 @@ public partial class MainWindow
 
         RefreshMarkerVisuals();
 
-        if (scroll) ScrollToMarker();
+        if (scroll) ScrollToMarker(pane);
     }
 
     private void ClearMarker(PaneView pane)
@@ -431,17 +480,17 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>只重写底栏那行字（字数、百分比），不动文档。</summary>
+    /// <summary>只重写底栏那行字（句号、字数、百分比），不动文档。</summary>
     private void UpdateCaption(PaneView pane)
     {
         if (pane.Caption == null || pane.BaseCaption.Length == 0) return;
         if (pane.ProgressKey.Length == 0) return;
 
         int marker = ProgressStore.Get(_progress, pane.ProgressKey);
-        pane.Caption.Text = WithProgress(pane.BaseCaption, marker, pane.PaneText);
+        pane.Caption.Text = WithProgress(pane.BaseCaption, marker, pane.Body?.Document, pane.Sentences);
     }
 
-    /// <summary>把某一栏的竖线摆到它自己的标记旁边。没标过 / 这一栏不能标 → 藏起来。</summary>
+    /// <summary>把某一栏的三层高亮摆到当前句上。没标过 / 这一栏不能标 → 全藏起来。</summary>
     private void UpdateMarkerVisual(PaneView pane)
     {
         if (!Diag.On) { UpdateMarkerVisualCore(pane); return; }
@@ -456,44 +505,106 @@ public partial class MainWindow
         var line = pane.Line;
         if (line == null) return;
 
-        // 先算出"应该在哪"，再一次性决定显示与位置 —— 不先藏再显。
-        // 先藏再显每轮都让布局失效两次，而绝大多数刷新里位置根本没变，
-        // 那两个来回就是白干的（也是以前空转的一部分）。
-        Rect? rect = null;
-
         var doc = pane.Body?.Document;
-        if (pane.Markable && doc != null)
-        {
-            int offset = CurrentOffset(pane);
-            if (offset >= 0) rect = RectAtOffset(doc, offset);
-        }
+        int offset = pane.Markable && doc != null ? CurrentOffset(pane) : -1;
 
-        if (rect == null || rect.Value.Height < 4)   // 没标过 / 那一处没排出高度（行间空隙）
+        if (offset < 0 || doc == null)
         {
-            if (line.Visibility != Visibility.Collapsed)
-                line.Visibility = Visibility.Collapsed;
+            HideHighlight(pane);
             return;
         }
 
-        Rect r = rect.Value;
+        // 当前句的源偏移区间。没有切句器（老资料/空文件）就退回"一个字的宽度"，
+        // 至少起笔标还在，不会因为切不出句子就整条不显示。
+        int spanStart = offset;
+        int spanEnd = offset + 1;
 
-        // 立在那个字的左边缘，高度取整行 —— 像一根光标，而不是一根分割线
-        double left = r.X - MarkerWidth / 2;
-        double top = r.Y + 1;
-        double height = Math.Max(9, r.Height - 2);
+        if (pane.Sentences is { Count: > 0 })
+        {
+            int si = pane.Sentences.IndexAt(offset);
+            if (si >= 0)
+            {
+                spanStart = pane.Sentences.At(si).Start;
+                spanEnd = pane.Sentences.At(si).End;
+            }
+        }
 
-        // 位置、高度都没变，本来就显示着：一个属性都别写
-        if (line.Visibility == Visibility.Visible
-            && Math.Abs(Canvas.GetLeft(line) - left) < 0.5
-            && Math.Abs(Canvas.GetTop(line) - top) < 0.5
-            && Math.Abs(line.Height - height) < 0.5)
-            return;
+        List<Rect> rects;
+        try { rects = SpanRects(doc, spanStart, spanEnd); }
+        catch (Exception) { HideHighlight(pane); return; }   // 文档结构怪异时不崩，先藏起来
 
-        Canvas.SetLeft(line, left);
-        Canvas.SetTop(line, top);
-        line.Height = height;
-        line.Visibility = Visibility.Visible;
+        if (rects.Count == 0) { HideHighlight(pane); return; }
+        // 和 ==高亮== 撞上：不画底带，只画加深下划线（两片半透明色叠一起会发脏）
+        bool clash = OverlapsHighlight(pane, spanStart, spanEnd);
+
+        // 活动栏亮一点，别的栏退到 8%，多栏并排时眼睛知道该看哪个
+        double alpha = clash ? 0 : (pane.Active ? 0.14 : 0.08);
+
+        // 关键：图层必须撑到正文那么大，否则嵌套 Canvas 是 0×0，配上 ClipToBounds 会被整片裁掉
+        double vw = pane.Body?.ActualWidth ?? 0;
+        double vh = pane.Body?.ActualHeight ?? 0;
+
+        if (vw <= 0 || vh <= 0)
+        {
+            // 正文还没量出尺寸时退一步，用浮层自己的尺寸（两者在同一格子里）
+            if (pane.BandLayer?.Parent is FrameworkElement ov)
+            {
+                vw = ov.ActualWidth;
+                vh = ov.ActualHeight;
+            }
+        }
+
+        ProgressHighlightLayers.EnsureSize(pane.BandLayer, vw, vh);
+        ProgressHighlightLayers.EnsureSize(pane.UnderlineLayer, vw, vh);
+
+        ProgressHighlightLayers.SyncBand(pane.BandLayer, rects, alpha);
+        ProgressHighlightLayers.SyncUnderline(pane.UnderlineLayer, rects, clash);
+
+        // 起笔标：立在句首那一行的左边缘，高度取整行
+        Rect r0 = rects[0];
+        double left = r0.X - MarkerWidth / 2;
+        double top = r0.Y + 1;
+        double height = Math.Max(9, r0.Height - 2);
+
+        bool changed = line.Visibility != Visibility.Visible
+                       || Math.Abs(Canvas.GetLeft(line) - left) >= 0.5
+                       || Math.Abs(Canvas.GetTop(line) - top) >= 0.5
+                       || Math.Abs(line.Height - height) >= 0.5
+                       || Math.Abs(line.Width - (pane.Active ? MarkerWidth : 2)) >= 0.1;
+
+        if (changed)
+        {
+            Canvas.SetLeft(line, left);
+            Canvas.SetTop(line, top);
+            line.Height = height;
+            line.Width = pane.Active ? MarkerWidth : 2;
+            line.Opacity = pane.Active ? 1 : 0.6;
+            line.Visibility = Visibility.Visible;
+        }
     }
+
+    private void HideHighlight(PaneView pane)
+    {
+        if (pane.Line != null && pane.Line.Visibility != Visibility.Collapsed)
+            pane.Line.Visibility = Visibility.Collapsed;
+
+        ProgressHighlightLayers.Clear(pane.BandLayer, pane.UnderlineLayer);
+    }
+
+    /// <summary>这一句是不是压在 ==高亮== 上（碰一点就算，粗判够用）。</summary>
+    private static bool OverlapsHighlight(PaneView pane, int start, int end)
+    {
+        if (pane.HighlightRanges == null || pane.HighlightRanges.Count == 0) return false;
+
+        foreach (var (s, e) in pane.HighlightRanges)
+            if (start < e && s < end) return true;
+
+        return false;
+    }
+
+    /// <summary>一句在栏里的矩形：一个视觉行一段（算法在 MdRender 里，便于单独验证）。</summary>
+    private static List<Rect> SpanRects(FlowDocument doc, int start, int end)
+        => MdRender.RectSegments(doc, start, end);
 
     /// <summary>
     /// 文档偏移 → 那个字在栏里的矩形。
@@ -511,16 +622,37 @@ public partial class MainWindow
         return r;
     }
 
-    /// <summary>键盘跳句之后，把视线拉到线那儿（鼠标点击不用滚，人就在那儿）。</summary>
-    private void ScrollToMarker()
+    /// <summary>
+    /// 推进一句之后，把视线拉过去。
+    /// 注意：起笔标画在正文**外面**的浮层上，对它 BringIntoView 是滚不动正文的，
+    /// 所以要自己算"这句现在在视口的什么位置、要不要滚、滚多少"。
+    /// 已经看得见就不动 —— 短句子连按 X 时页面别一直往上窜。
+    /// </summary>
+    private void ScrollToMarker(PaneView pane)
     {
-        foreach (var pane in _panes)
-        {
-            if (!pane.Markable) continue;
+        if (pane?.Body?.Document == null) return;
 
-            UpdateMarkerVisual(pane);
-            pane.Line?.BringIntoView();
-        }
+        UpdateMarkerVisual(pane);
+
+        int offset = CurrentOffset(pane);
+        if (offset < 0) return;
+
+        int start = pane.Sentences is { Count: > 0 } ? pane.Sentences.StartOf(offset) : offset;
+        Rect? rect = RectAtOffset(pane.Body.Document, start);
+        if (rect == null) return;
+
+        if (FindScrollViewer(pane.Body) is not ScrollViewer sv) return;
+
+        double y = rect.Value.Y;                       // 视口坐标
+        double h = rect.Value.Height;
+
+        // 上沿留 8px、下沿留 8px 余量，都算"看得见"
+        if (y >= 8 && y + h <= sv.ViewportHeight - 8) return;
+
+        double target = sv.VerticalOffset + y - sv.ViewportHeight * 0.33;
+        target = Math.Clamp(target, 0, Math.Max(0, sv.ScrollableHeight));
+
+        AnimateScroll(sv, sv.VerticalOffset, target);
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
@@ -540,101 +672,236 @@ public partial class MainWindow
         return null;
     }
 
-    /// <summary>栏底那句：字数/段数之后接"译到多少字"。没标过就原样返回。</summary>
+    /// <summary>栏底那句："第 X/Y 句 · 译到多少字（Z%）"。没标过就原样返回。</summary>
     /// <summary>
-    /// 底栏那句"译到 X/Y 字（Z%）"。
-    /// X、Y 都按"非空白字"数，跟栏底"字数"是同一个口径，免得一个 21 万一个 26 万。
+    /// 底栏那句"第 X/Y 句 · 译到 X/Y 字（Z%）"。
+    /// 字按"非空白字"数，跟栏底"字数"是同一个口径，免得一个 21 万一个 26 万。
+    /// 数的是**文档里**的字（不是原文件）：Markdown 的偏移跟原文字符位置不是一套。
     /// </summary>
-    private static string WithProgress(string note, int marker, string text)
+    private static string WithProgress(string note, int marker, FlowDocument? doc, SentenceIndex? sentences)
     {
         if (marker < 0) return note;
 
-        int total = TextStats.CountChars(text);
-        if (total <= 0) return note;
+        string head = note;
 
-        int done = marker <= 0 ? 0 : TextStats.CountChars(text.Substring(0, Math.Min(marker, text.Length)));
-        done = Math.Clamp(done, 0, total);
+        if (sentences is { Count: > 0 })
+        {
+            int si = sentences.IndexAt(marker);
+            if (si >= 0) head = note + $" · 第 {si + 1}/{sentences.Count} 句";
+        }
+
+        if (doc == null) return head;
+
+        int total = MdRender.CountCharsBefore(doc, int.MaxValue);
+        if (total <= 0) return head;
+
+        int done = Math.Clamp(MdRender.CountCharsBefore(doc, marker), 0, total);
         int pct = (int)Math.Round(done * 100.0 / total);
 
-        return note + $" · 译到 {done:N0}/{total:N0} 字（{pct}%）";
+        return head + $" · 译到 {done:N0}/{total:N0} 字（{pct}%）";
     }
 
     // ---------------------------------------------------------------- 键盘挪一句
 
     private void StepMarker(int delta)
     {
-        var pane = FirstMarkablePane();
+        var pane = ResolveActivePane();
         if (pane?.Body?.Document == null) return;
 
-        // 按"句子"走，不按"段落"走：一份资料常常一整章就是一大段，
-        // 按段落跳一下就是半章，那不叫一句。
-        string text = ResolvePaneContent(pane.Spec, out _, out _, out _, out _);
-        if (text.Length == 0) return;
+        // 一律走已经切好的句子表：跟画底带用的是同一份，不会"线跳到 A、底带留在 B"
+        if (pane.Sentences is not { Count: > 0 })
+        {
+            Status("这一栏还没切出句子（可能是空文件或表格）");
+            return;
+        }
 
         int offset = CurrentOffset(pane);
 
         if (offset < 0)
         {
-            SetMarker(pane, 0, scroll: true);   // 还没标过：先标到最前面
+            SetMarker(pane, pane.Sentences.At(0).Start, scroll: true);   // 还没标过：先标到第一句
             return;
         }
 
         int target = delta > 0
-            ? NextSentence(text, offset)
-            : PrevSentence(text, offset);
+            ? pane.Sentences.NextStart(offset)
+            : pane.Sentences.PrevStart(offset);
 
-        if (target >= 0 && target != offset) SetMarker(pane, target, scroll: true);
-    }
-
-    /// <summary>句末标点。英文源文本用 . ! ?，中文引文里可能出现全角。</summary>
-    private static bool IsStop(char c) => c is '.' or '!' or '?' or '。' or '！' or '？' or '…';
-
-    /// <summary>跟在句末标点后面的收尾引号/括号，算作上一句的一部分。</summary>
-    private static bool IsCloser(char c) => c is '"' or '\'' or '”' or '’' or '）' or ')' or '】' or '」';
-
-    /// <summary>下一个句子的开头；到末尾则返回 -1。</summary>
-    private static int NextSentence(string text, int from)
-    {
-        int i = Math.Clamp(from, 0, text.Length);
-
-        while (i < text.Length && !IsStop(text[i]) && !IsCloser(text[i])) i++;
-        while (i < text.Length && (IsStop(text[i]) || IsCloser(text[i]))) i++;
-        while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
-
-        return i < text.Length ? i : -1;
-    }
-
-    /// <summary>上一个句子的开头；已经在最前面则返回 0。</summary>
-    private static int PrevSentence(string text, int from)
-    {
-        int pos = Math.Clamp(from, 0, text.Length);
-        int guard = 0;
-
-        while (pos > 0 && guard++ < 80)
+        if (target < 0)
         {
-            int i = pos - 1;
-            while (i >= 0 && (char.IsWhiteSpace(text[i]) || IsCloser(text[i]))) i--;
-
-            int j = i;
-            while (j >= 0 && !IsStop(text[j])) j--;
-            if (j < 0) return 0;
-
-            int k = j + 1;
-            while (k < text.Length && (char.IsWhiteSpace(text[k]) || IsCloser(text[k]))) k++;
-
-            if (k < pos) return k;     // 真往前了，就停这儿
-            pos = j;                   // 还在原地/往后，再退一句
+            Status("已经是最后一句了");
+            return;
         }
 
-        return 0;
+        if (target != offset) SetMarker(pane, target, scroll: true);
     }
 
-    /// <summary>键盘跳句作用在第一栏能标的（"跟随当前章"那套已经废了，栏与栏之间没有主次）。</summary>
+    // ---------------------------------------------------------------- 活动栏
+
+    /// <summary>
+    /// 现在该操作哪一栏（P2 的四层判定）：
+    ///   ① 钉住的栏 —— 人明确说了"就这一栏"，压过一切
+    ///   ② 鼠标压着的栏 —— 眼睛看到哪就操作哪，最省事，也不用先点一下
+    ///   ③ 最近点过的栏 —— 鼠标移开之后还记得上一步在哪
+    ///   ④ 第一栏能标的 —— 兜底，什么都没有时至少有个去处
+    /// </summary>
+    private PaneView? ResolveActivePane()
+    {
+        if (_pinnedPane != null && _panes.Contains(_pinnedPane)) return _pinnedPane;
+        if (_hoverPane != null && _panes.Contains(_hoverPane)) return _hoverPane;
+        if (_activePane != null && _panes.Contains(_activePane)) return _activePane;
+        return FirstMarkablePane();
+    }
+
     private PaneView? FirstMarkablePane()
     {
         foreach (var pane in _panes)
             if (pane.Markable) return pane;
 
         return null;
+    }
+
+    private void SetActivePane(PaneView pane)
+    {
+        _activePane = pane;
+        ApplyActivePane();
+    }
+
+    /// <summary>活动栏的视觉：卡片边框换成进度色、栏头亮一个实心圆点；其余栏退回灰边框。</summary>
+    private void ApplyActivePane()
+    {
+        var active = ResolveActivePane();
+        Brush normal = (Brush)FindResource("Line");
+
+        foreach (var pane in _panes)
+        {
+            bool on = pane == active;
+            pane.Active = on;
+
+            if (pane.Root != null)
+                pane.Root.BorderBrush = on ? ProgressBrush : normal;
+
+            if (pane.Dot != null)
+                pane.Dot.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
+            if (pane.PinButton != null)
+                pane.PinButton.Content = pane == _pinnedPane ? "●" : "◎";
+        }
+
+        RefreshMarkerVisuals();
+    }
+
+    /// <summary>钉住 / 取消钉住这一栏。钉住之后活动栏不再跟着鼠标跑。</summary>
+    private void TogglePin(PaneView pane)
+    {
+        _pinnedPane = _pinnedPane == pane ? null : pane;
+
+        if (_pinnedPane != null)
+        {
+            _activePane = pane;
+            Status($"已钉住「{System.IO.Path.GetFileName(pane.Spec.Path)}」这一栏");
+        }
+        else
+        {
+            Status("已取消钉住，活动栏重新跟着鼠标走");
+        }
+
+        ApplyActivePane();
+    }
+
+    private void SwitchToPane(int index)
+    {
+        if (index < 0 || index >= _panes.Count)
+        {
+            Status($"没有第 {index + 1} 栏");
+            return;
+        }
+
+        _pinnedPane = null;     // 手动切栏 = 我现在就要操作它，钉住先让开
+        _hoverPane = null;
+        SetActivePane(_panes[index]);
+
+        Status(_panes[index].Spec.Path.Length == 0
+            ? $"活动栏：第 {index + 1} 栏"
+            : $"活动栏：{System.IO.Path.GetFileName(_panes[index].Spec.Path)}");
+    }
+
+    // ---------------------------------------------------------------- 居中找回
+
+    /// <summary>
+    /// Ctrl+Alt+C：把当前句滚到栏的垂直中间，再让底带闪两下。
+    /// 只动视口、不改进度 —— 这是一次"我看看自己译到哪了"，不是"我译完了"。
+    /// </summary>
+    private void CenterOnActivePane()
+    {
+        var pane = ResolveActivePane();
+        if (pane?.Body?.Document == null) return;
+
+        int offset = CurrentOffset(pane);
+        if (offset < 0)
+        {
+            Status("这一栏还没标进度，先点一下正文");
+            return;
+        }
+
+        int start = pane.Sentences is { Count: > 0 } ? pane.Sentences.StartOf(offset) : offset;
+        Rect? rect = RectAtOffset(pane.Body.Document, start);
+        if (rect == null) return;
+
+        if (FindScrollViewer(pane.Body) is not ScrollViewer sv)
+        {
+            pane.Line?.BringIntoView();
+            return;
+        }
+
+        double docY = sv.VerticalOffset + rect.Value.Y;
+        double target = docY - (sv.ViewportHeight - rect.Value.Height) / 2;
+        target = Math.Clamp(target, 0, Math.Max(0, sv.ScrollableHeight));
+
+        AnimateScroll(sv, sv.VerticalOffset, target);
+        PulseBand(pane);
+    }
+
+    /// <summary>约 180ms 的缓动滚动（12 帧左右）。指数缓出，起步快、收尾稳。</summary>
+    private static void AnimateScroll(ScrollViewer sv, double from, double to)
+    {
+        if (Math.Abs(to - from) < 2)
+        {
+            sv.ScrollToVerticalOffset(to);
+            return;
+        }
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+
+        timer.Tick += (_, _) =>
+        {
+            double t = Math.Min(1, watch.Elapsed.TotalMilliseconds / 180.0);
+            double eased = 1 - Math.Pow(1 - t, 3);
+            sv.ScrollToVerticalOffset(from + (to - from) * eased);
+
+            if (t >= 1) timer.Stop();
+        };
+
+        timer.Start();
+    }
+
+    /// <summary>底带闪两下：暗下去再回来，用来"一眼找回进度"。</summary>
+    private static void PulseBand(PaneView pane)
+    {
+        if (pane.BandLayer == null) return;
+
+        // 注意：Opacity 的上限是 1，原来写 1.0→1.85 会被裁成 1→1，等于根本没动。
+        // 真正的脉冲得"先暗下去再回来"。
+        var anim = new System.Windows.Media.Animation.DoubleAnimation
+        {
+            From = 1.0,
+            To = 0.30,
+            Duration = TimeSpan.FromMilliseconds(160),
+            AutoReverse = true,
+            RepeatBehavior = new System.Windows.Media.Animation.RepeatBehavior(2),
+        };
+
+        pane.BandLayer.BeginAnimation(System.Windows.UIElement.OpacityProperty, anim);
     }
 }
