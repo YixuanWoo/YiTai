@@ -529,16 +529,22 @@ public partial class MainWindow
             }
         }
 
-        List<Rect> rects;
-        try { rects = SpanRects(doc, spanStart, spanEnd); }
-        catch (Exception) { HideHighlight(pane); return; }   // 文档结构怪异时不崩，先藏起来
+        // 撞上 ==高亮== 的时候不能整句一起退化成下划线：
+        // 一句话里常常只有几个词被标过，其余的字该照常亮着。
+        // 拆块逻辑在 ProgressHighlightLayers.PlanRects 里（探针也调那一份，测的就是真代码）。
+        ProgressHighlightLayers.Plan plan;
 
-        if (rects.Count == 0) { HideHighlight(pane); return; }
-        // 和 ==高亮== 撞上：不画底带，只画加深下划线（两片半透明色叠一起会发脏）
-        bool clash = OverlapsHighlight(pane, spanStart, spanEnd);
+        try { plan = ProgressHighlightLayers.PlanRects(doc, spanStart, spanEnd, pane.HighlightRanges); }
+        catch (Exception)
+        {
+            HideHighlight(pane);   // 文档结构怪异时不崩，先藏起来
+            return;
+        }
+
+        if (plan.Sentence.Count == 0) { HideHighlight(pane); return; }
 
         // 活动栏亮一点，别的栏退到 8%，多栏并排时眼睛知道该看哪个
-        double alpha = clash ? 0 : (pane.Active ? 0.14 : 0.08);
+        double alpha = pane.Active ? 0.14 : 0.08;
 
         // 关键：图层必须撑到正文那么大，否则嵌套 Canvas 是 0×0，配上 ClipToBounds 会被整片裁掉
         double vw = pane.Body?.ActualWidth ?? 0;
@@ -557,11 +563,11 @@ public partial class MainWindow
         ProgressHighlightLayers.EnsureSize(pane.BandLayer, vw, vh);
         ProgressHighlightLayers.EnsureSize(pane.UnderlineLayer, vw, vh);
 
-        ProgressHighlightLayers.SyncBand(pane.BandLayer, rects, alpha);
-        ProgressHighlightLayers.SyncUnderline(pane.UnderlineLayer, rects, clash);
+        ProgressHighlightLayers.SyncBand(pane.BandLayer, plan.Band, plan.Band.Count == 0 ? 0 : alpha);
+        ProgressHighlightLayers.SyncUnderline(pane.UnderlineLayer, plan.Underline, plan.Mixed);
 
         // 起笔标：立在句首那一行的左边缘，高度取整行
-        Rect r0 = rects[0];
+        Rect r0 = plan.Sentence[0];
         double left = r0.X - MarkerWidth / 2;
         double top = r0.Y + 1;
         double height = Math.Max(9, r0.Height - 2);
@@ -589,17 +595,6 @@ public partial class MainWindow
             pane.Line.Visibility = Visibility.Collapsed;
 
         ProgressHighlightLayers.Clear(pane.BandLayer, pane.UnderlineLayer);
-    }
-
-    /// <summary>这一句是不是压在 ==高亮== 上（碰一点就算，粗判够用）。</summary>
-    private static bool OverlapsHighlight(PaneView pane, int start, int end)
-    {
-        if (pane.HighlightRanges == null || pane.HighlightRanges.Count == 0) return false;
-
-        foreach (var (s, e) in pane.HighlightRanges)
-            if (start < e && s < end) return true;
-
-        return false;
     }
 
     /// <summary>一句在栏里的矩形：一个视觉行一段（算法在 MdRender 里，便于单独验证）。</summary>

@@ -18,8 +18,10 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using YiTai.Core;
 
 namespace YiTai.App;
 
@@ -122,5 +124,49 @@ public static class ProgressHighlightLayers
     public static void Clear(params Canvas?[] layers)
     {
         foreach (var layer in layers) layer?.Children.Clear();
+    }
+
+    // ---------------------------------------------------------------- 分块：底带该让哪儿给 ==高亮==
+
+    /// <summary>
+    /// 一次重画要用的全部矩形。
+    ///   <see cref="Sentence"/> 整句（起笔标按它的第一段定位）；
+    ///   <see cref="Band"/>     只画底带的部分（已经减掉 ==高亮==）；
+    ///   <see cref="Underline"/>只画下划线的部分；
+    ///   <see cref="Mixed"/>    这一句里有没有 ==高亮==（有的话下划线换加深色）。
+    /// </summary>
+    public readonly record struct Plan(
+        IReadOnlyList<Rect> Sentence,
+        IReadOnlyList<Rect> Band,
+        IReadOnlyList<Rect> Underline,
+        bool Mixed);
+
+    /// <summary>
+    /// 把"一句"拆成"没标过的"和"标过的"两组矩形。
+    ///
+    /// 为什么不能整句一刀切：一句话里常常只有几个词被 ==...== 标过。
+    /// 早先的写法是"碰上一点高亮就整句不画底带"，结果那句里没标过的字也跟着不亮了。
+    /// 现在没标过的部分照常画底带，只有标过的部分改画加深下划线，底带在那里让开
+    /// （两片半透明色叠一起会发脏）。
+    /// </summary>
+    public static Plan PlanRects(
+        FlowDocument doc, int start, int end, IReadOnlyList<(int Start, int End)>? highlights)
+    {
+        var sentence = MdRender.RectSegments(doc, start, end);
+
+        var overlap = RangeMath.Intersect(start, end, highlights);
+        var plain = RangeMath.Subtract(start, end, highlights);
+
+        if (overlap.Count == 0) return new Plan(sentence, sentence, sentence, false);
+
+        var band = new List<Rect>();
+        foreach (var (s, e) in plain)
+            if (e > s) band.AddRange(MdRender.RectSegments(doc, s, e));
+
+        var underline = new List<Rect>();
+        foreach (var (s, e) in overlap)
+            if (e > s) underline.AddRange(MdRender.RectSegments(doc, s, e));
+
+        return new Plan(sentence, band, underline, true);
     }
 }

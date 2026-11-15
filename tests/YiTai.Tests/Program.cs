@@ -693,6 +693,60 @@ if (layerPath != null && markerPath != null)
     }
 }
 
+// ---------------------------------------------------------------- 17. 区间运算（底带给 ==高亮== 让路）
+// 为什么测这个：一句话里可能只有三五个字被 ==...== 标过。
+// 原先的写法是"只要碰到一个高亮字，整句都不画底带、只画下划线"，
+// 结果那一句里没标过的字也跟着不亮了（用户截图报的就是这个）。
+// 正确做法是把句子切成"没标过的"和"标过的"，各画各的，所以先把区间减法测死。
+Console.WriteLine();
+Console.WriteLine("== 17. 区间运算 RangeMath ==");
+
+void Same((int Start, int End)[] got, (int Start, int End)[] want, string name)
+{
+    bool ok = got.Length == want.Length;
+    if (ok)
+    {
+        for (int i = 0; i < got.Length; i++)
+            if (got[i] != want[i]) { ok = false; break; }
+    }
+
+    Check(name, ok, ok ? "" : $"得到 [{string.Join(", ", got.Select(g => $"{g.Start}..{g.End}"))}]");
+}
+
+Same(RangeMath.Subtract(10, 20, null).ToArray(), new[] { (10, 20) }, "没有高亮 → 整句保留");
+Same(RangeMath.Subtract(10, 20, new[] { (13, 16) }).ToArray(),
+     new[] { (10, 13), (16, 20) }, "中间一段高亮 → 断成左右两段");
+
+Same(RangeMath.Subtract(10, 20, new[] { (10, 13) }).ToArray(),
+     new[] { (13, 20) }, "高亮压在句首 → 只留后半段");
+
+Same(RangeMath.Subtract(10, 20, new[] { (17, 20) }).ToArray(),
+     new[] { (10, 17) }, "高亮压在句尾 → 只留前半段");
+
+Same(RangeMath.Subtract(10, 20, new[] { (5, 25) }).ToArray(),
+     Array.Empty<(int, int)>(), "整句都在高亮里 → 不留底带");
+
+Same(RangeMath.Subtract(10, 20, new[] { (0, 12), (18, 30) }).ToArray(),
+     new[] { (12, 18) }, "高亮越过句子两端 → 只留中间");
+
+Same(RangeMath.Subtract(10, 20, new[] { (13, 16), (14, 18) }).ToArray(),
+     new[] { (10, 13), (18, 20) }, "两段高亮重叠 → 先合并再减");
+
+Same(RangeMath.Subtract(10, 20, new[] { (16, 18), (13, 14) }).ToArray(),
+     new[] { (10, 13), (14, 16), (18, 20) }, "高亮区间乱序传入 → 先排序再减");
+
+Same(RangeMath.Subtract(10, 20, new[] { (13, 13) }).ToArray(),
+     new[] { (10, 20) }, "空高亮区间不产生影响");
+
+Same(RangeMath.Subtract(20, 10, new[] { (13, 16) }).ToArray(),
+     Array.Empty<(int, int)>(), "空句子 → 什么都不返回");
+
+Same(RangeMath.Intersect(10, 20, new[] { (5, 14), (18, 25) }).ToArray(),
+     new[] { (10, 14), (18, 20) }, "交集只取落在句内的部分（下划线画在这里）");
+
+Same(RangeMath.Intersect(10, 20, null).ToArray(),
+     Array.Empty<(int, int)>(), "没有高亮 → 交集为空");
+
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
 
