@@ -8,7 +8,7 @@
 | 项 | 现状 |
 |---|---|
 | 平台 | Windows / WPF / .NET SDK 10（`net10.0-windows`） |
-| 依赖 | **零第三方依赖**（Core 与 App 的 csproj 都没有 PackageReference） |
+| 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（另有 `ci-pending` 分支，见 T-13） |
 | 构建 | 0 警告 0 错误 |
 | 冒烟测试 | **176 项全过**（`.\build.ps1`，退出码 0） |
@@ -21,7 +21,8 @@
 1. **Core 不知道界面存在**：`YiTai.Core` 只允许项目、文件、文本、落盘；不许出现 WPF 类型。
 2. **App 不知道旧模型**：界面层只认"一份文件"，不许出现"章节 / 注解 / 一份原文配一份译文"的推导。
 3. **路径只在 `ProjectLayout` 里拼**：别在业务代码里手拼 `project.json`、`translations\`、`.yitai\`。
-4. **零第三方依赖**：要引包先按 T-12 的方式把代价写清楚，再让人拍板。
+4. **Core 零第三方依赖；App 只保留 `Microsoft.Web.WebView2`**（PDF 按原件显示）。
+   要加新包，先按 T-12 的方式把代价写清楚，再让人拍板。
 5. **落盘四条规矩**：换行/BOM 照源文件、原子替换（先 `.tmp` 再 move）、每天首次保存前备份、空稿拒绝落盘。
 
 ## 2. 每次改动的工作流
@@ -49,7 +50,7 @@
 - [ ] 测试全过；项数与上次相比**只增不减**（当前 176；删测试要说明理由）
 - [ ] `git status` 没有意外的未跟踪文件
 - [ ] TODO 里 `[ ]` 项没有过期承诺；勾掉的项写了**验证方式**（命令 + 看到的结果）
-- [ ] 依赖仍为零：两个 csproj 里没有 `PackageReference`
+- [ ] 依赖没长歪：Core 无 `PackageReference`；App 只有 `Microsoft.Web.WebView2`
 - [ ] `samples\demo` 能打开；改过栏位/渲染的版本要真开窗口看一眼
 - [ ] 发布前：`.\build.ps1 -Release` 能出 exe，根目录 `YiTai.exe` 已同步
 
