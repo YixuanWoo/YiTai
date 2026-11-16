@@ -168,9 +168,24 @@
   token 缺 `workflow` scope。两条路：网页 Add file 粘贴，或 `gh auth refresh -s workflow`。
   *验收*：一次 push 后 Actions 绿勾。
 
-- [ ] **T-14 `release.ps1`**
-  把"编译 → 拷根目录 → 打 tag → `gh release create` 挂 exe"串成一条命令。
-  *验收*：一条命令产出新版本 Release，README 的下载链接不用手改（链接按 latest）。
+- [x] **T-14 `release.ps1`（已完成，2026-11-16；远端挂 Release 仍未做，见条目末尾的边界）**
+  一条命令做完：校验版本号 → 查工作区（脏且没给 `-AllowDirty` 就中止）→ 跑门禁 `build.ps1`
+  （0 警告 0 错误 + 冒烟全过）→ `dotnet publish` 出自包含单文件到 `dist\<Version>\` → 打 zip →
+  逐份产物写 `.sha256` → 打印清单（路径 / 大小 / sha256 / 耗时）。
+  *验收*：一条命令产出一份可校验的本地发布产物，README 的下载链接不用手改（链接按 latest）。
+  *完成*：新增 `tools\release.ps1`，参数 `-Version`（如 `0.2.0`，演练可用 `0.0.0-drill`）与 `-AllowDirty`；
+  退出码 `0` 成功 / `1` 门禁或发布失败 / `2` 前置条件不满足（版本号非法、工作区脏）。
+  *验收证据（2026-11-16 本地演练，版本 `0.0.0-drill`）*：`.\tools\release.ps1 -Version 0.0.0-drill -AllowDirty` 退出码 0；
+  `dist\0.0.0-drill\YiTai.exe` 62,146,152 字节（59.3 MB，win-x64 自包含单文件）；
+  `dist\0.0.0-drill\YiTai-0.0.0-drill-win-x64.zip` 56,659,736 字节（54.0 MB，内含 `YiTai.exe` 一份）；
+  两份 `.sha256` 用 `Get-FileHash` 独立复算一致；门禁 Debug 0 警告 0 错误、冒烟 176 项全过；
+  合计 29.5 秒（门禁 9.3 / 发布 16.7 / 打包 3.1）。
+  反例（均退出码 2 且打印原因）：`-Version` 缺失、`1.2`、`abc`、`v1.2.3`、`1.2.3.4`、`01.2.3`，
+  以及"工作区脏且没给 `-AllowDirty`"。
+  证据全文：`docs\reports\2026-11-16-release-drill.md`。
+  *本条边界（没做的，别当成已完成）*：**不打 tag、不 push、不签名、不跑 `gh release create`**，
+  也不覆盖仓库根 `YiTai.exe`（那是日常双击入口，演练不该换掉它）；远端挂产物要等 T-13（CI 凭据 scope）
+  与 T-15（签名拍板）之后再接，目前挂 Releases 仍是手动一步。`dist\` 已在 `.gitignore` 里，产物不进 git。
 
 - [ ] **T-15 exe 代码签名（可选）**
   未签名时别人下载会被 SmartScreen 拦"未知发布者"。自签证书可减少此类提示，但需自备证书。
