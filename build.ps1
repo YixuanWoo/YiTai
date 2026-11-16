@@ -13,6 +13,10 @@ param(
 $ErrorPolicy = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# 从哪个目录调这个脚本，都按仓库根跑：冒烟测试里有一节要"从当前目录往上找源码文件"，
+# 在别的目录（比如看板的任务目录）调用时，不切过来就会把 3 项读源码的断言误判成失败。
+Set-Location -LiteralPath $root
+
 Write-Host "== 构建 ==" -ForegroundColor Cyan
 & dotnet build (Join-Path $root 'YiTai.slnx') -c Debug --nologo
 if ($LASTEXITCODE -ne 0) { throw '构建失败' }
