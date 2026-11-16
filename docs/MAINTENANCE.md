@@ -143,3 +143,65 @@
 3. **T-17**：大文件性能现在做还是等真实卡顿反馈。
 4. **项目归属**：YiTai 目前不在 AICompany 的项目配置里。若要纳入公司项目管理，
    建议项目 id `yitai`、显示名「译台」、`rootDir` 指向本仓库（这需要改公司配置，留给董事会/屋主确认）。
+
+## 10. 一键体检（`tools\maintenance-check.ps1`）
+
+第 3 节那份清单有 7 条，人跑一遍容易漏。`tools\maintenance-check.ps1` 把能自动判的那几条合成一条命令：
+
+```powershell
+# 体检；报告默认写 %TEMP%\yitai-maintenance-<时间戳>.json
+.\tools\maintenance-check.ps1
+
+# 顺便把 JSON 打到 stdout（stdout 上只有 JSON）
+.\tools\maintenance-check.ps1 -Json
+
+# 指定报告位置
+.\tools\maintenance-check.ps1 -OutputPath D:\tmp\yitai-check.json
+
+# 手上有意留着的改动，先跳过 git 检查
+.\tools\maintenance-check.ps1 -AllowDirty
+
+# 造失败用例：指向一个不存在的构建脚本
+.\tools\maintenance-check.ps1 -BuildScript .\nope.ps1
+```
+
+参数：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-RepoRoot` | 脚本所在 `tools\` 的上一层 | 仓库根；一般不用给 |
+| `-BuildScript` | `build.ps1` | 被体检的构建脚本，相对仓库根解析（造失败用例就改它） |
+| `-ExpectedTestCount` | `176` | 冒烟测试项数下限；少于它判失败，多于它通过并在摘要里标出 |
+| `-AllowDirty` | 关 | 跳过 git 工作区检查 |
+| `-Json` | 关 | 把 JSON 报告同时写到 stdout |
+| `-OutputPath` | `%TEMP%\yitai-maintenance-<时间戳>.json` | 报告落盘位置 |
+
+4 项检查（任一失败即非 0 退出）：
+
+1. **关键文件存在**：`build.ps1`（或 `-BuildScript` 指定的那个）、`docs/MAINTENANCE.md`、`docs/TODO.md`。
+2. **构建 + 冒烟测试**：调 `build.ps1`（Debug），断言退出码 0、`0 个警告 / 0 个错误`、收尾行是 `全部通过 ✓（176 项）`，且项数 ≥ `-ExpectedTestCount`。
+3. **Release 构建**：单独跑 `dotnet build YiTai.slnx -c Release`（`build.ps1` 不带 `-Release` 时只编 Debug，Release 的警告没人看，所以这里补一遍），断言退出码 0、0 警告 0 错误。Debug 没过时这一项记「跳过」。
+4. **git 工作区**：只看**代码 / 工程文件**（`src`、`tests`、`dist`、`tools`、`.github`、`build.ps1`、`YiTai.exe`、`*.csproj` / `*.slnx` / `*.ps1` / `*.yml` / `*.xaml` 等）有没有未提交改动。
+   文档改动（`*.md`）和未跟踪文件只作提示、不算失败——接手时仓库本来就可能带着没提交的 docs 草稿，写文档也不该把体检搞红。要看细节读 JSON 里的 `docChanges` / `untracked`。
+
+退出码：
+
+| 码 | 含义 |
+|---|---|
+| `0` | 全部通过（`-AllowDirty` 的跳过项不算失败） |
+| `1` | 有必检项失败；摘要末尾按编号列出失败项 |
+| `2` | 连体检都做不起来（仓库根不存在、参数不对） |
+
+JSON 报告（`schemaVersion` 1）：
+
+- `checks[]`：每项的 `id` / `title` / `status`（`pass` / `fail` / `skipped`）/ `detail` / `durationSeconds` / `assertions[]`（`name` / `expected` / `actual` / `pass` / `message`）
+- `summary`：`total` / `passed` / `failed` / `skipped` / `ok`
+- `failures[]` 失败清单；`notes[]` 提示（比如报告被写进了仓库）
+- git 项另有 `codeChanges` / `docChanges` / `untracked` 三个数组；构建项有 `log`（完整日志在 `%TEMP%`）
+
+使用注意：
+
+- 只用 Windows 自带 PowerShell 能力，不引第三方模块，脚本自身不联网（构建时的包还原是 `build.ps1` / `dotnet` 的事）。
+- 报告和构建日志都写 `%TEMP%`，不落仓库。
+- 完整构建输出不往屏幕上糊（176 项太长）；失败时 JSON 只带末尾 12 行 `outputTail`，要全的看 `log`。
+- 它替不了人：`samples\demo` 真机开窗口看一眼、依赖没长歪、TODO 承诺没过期、`build.ps1 -Release` 出 exe 并同步，这几条还得照第 3 节人工过。
