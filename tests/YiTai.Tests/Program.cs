@@ -12,6 +12,7 @@
 //   12    进度键绑文件路径（含旧裸键的迁移与认领）
 //   15-16 滚动条样式、进度高亮图层的回归断言（读源码文本，不画窗口）
 //   17    区间运算 RangeMath（底带给 ==高亮== 让路）
+//   18    工作计时落盘 WorkTimeStore（缺文件/坏 JSON/往返/多日/原子写）+ 源码锚
 //
 // 退出码 0 = 全过，1 = 有失败。
 // ============================================================
@@ -690,6 +691,23 @@ if (themePath != null)
                 Check("横向 Track 方向不反转（滑块在左、往右拖）",
                       track != null && (string?)track.Attribute("Value") == "False",
                       track == null ? "(没设 PART_Track)" : (string?)track.Attribute("Value"));
+
+                // 点轨道翻页：RepeatButton 默认绑的是竖向命令 PageUp/PageDown，
+                // 横向条上 ScrollViewer 不认它们 —— 真机表现就是"点轨道毫无反应"。
+                // 横向触发器必须把两个按钮换成 PageLeft/PageRight（T-28 真机验证时发现的）。
+                var decrease = horizTrack.Elements(ns + "Setter")
+                    .FirstOrDefault(s => (string?)s.Attribute("TargetName") == "PART_Decrease");
+                Check("点轨道左段 → 绑 PageLeftCommand（真会向左翻一页）",
+                      decrease != null
+                      && ((string?)decrease.Attribute("Value") ?? "").Contains("PageLeftCommand"),
+                      decrease == null ? "(没设 PART_Decrease)" : (string?)decrease.Attribute("Value"));
+
+                var increase = horizTrack.Elements(ns + "Setter")
+                    .FirstOrDefault(s => (string?)s.Attribute("TargetName") == "PART_Increase");
+                Check("点轨道右段 → 绑 PageRightCommand（真会向右翻一页）",
+                      increase != null
+                      && ((string?)increase.Attribute("Value") ?? "").Contains("PageRightCommand"),
+                      increase == null ? "(没设 PART_Increase)" : (string?)increase.Attribute("Value"));
             }
         }
     }
@@ -801,6 +819,141 @@ Same(RangeMath.Intersect(10, 20, new[] { (5, 14), (18, 25) }).ToArray(),
 
 Same(RangeMath.Intersect(10, 20, null).ToArray(),
      Array.Empty<(int, int)>(), "没有高亮 → 交集为空");
+
+// ============================================================
+// 18. 工作计时落盘（T-29）
+// ============================================================
+// 为什么测这个：计时器每 30 秒往 .yitai\worktime.json 记一笔，读坏、写坏、
+// 崩溃断电都在这个文件上发生。它坏了绝不能连累项目打不开，所以"缺文件 / 内容坏"
+// 必须是空账而不是异常；"原子写"必须真的不留 .tmp。这些都是纯 Core 逻辑，
+// 不开窗口就能钉住。另加几条源码锚：T-28 的 IsDocumentEnabled=true、计时口径的
+// 180 秒与 30 秒落盘——光靠"我记得改过"守不住，下一个人顺手改回去也不会有人发现。
+Console.WriteLine();
+Console.WriteLine("== 18. 工作计时落盘（T-29）==");
+
+WorkTimeLedger LoadNoThrow(string rootPath, out bool threw)
+{
+    threw = false;
+    try { return WorkTimeStore.Load(rootPath); }
+    catch (Exception) { threw = true; return new WorkTimeLedger(); }
+}
+
+string wbox = NewSandbox();
+string wroot = Path.Combine(wbox, "旧项目");
+ProjectStore.CreateNew(wroot, "旧项目");
+
+// 18.1 旧项目：只有 project.json，从来没有 .yitai\worktime.json
+Check("旧项目本来没有 worktime.json（前提）", !File.Exists(ProjectLayout.WorkTimeFile(wroot)));
+bool threw;
+var emptyLedger = LoadNoThrow(wroot, out threw);
+Check("缺文件 → 空账、不抛异常", !threw && emptyLedger.Days.Count == 0,
+      threw ? "抛了异常" : $"{emptyLedger.Days.Count} 天");
+Check("空账的版本号仍是 1（写回去结构不漂）", emptyLedger.Version == 1, emptyLedger.Version.ToString());
+
+// 18.2 文件内容坏掉：读不懂就当没记过，不能连累打开项目
+Directory.CreateDirectory(ProjectLayout.Private(wroot));
+File.WriteAllText(ProjectLayout.WorkTimeFile(wroot), "{ 这不是 JSON");
+var brokenLedger = LoadNoThrow(wroot, out threw);
+Check("损坏 JSON → 空账、不抛异常", !threw && brokenLedger.Days.Count == 0,
+      threw ? "抛了异常" : $"{brokenLedger.Days.Count} 天");
+
+// 18.3 Add / Save / Load 往返（坏文件被这一次 Save 覆盖掉）
+var ledger = WorkTimeStore.Load(wroot);
+WorkTimeStore.Add(ledger, "2026-11-17", 3600);
+WorkTimeStore.Save(wroot, ledger);
+var back = WorkTimeStore.Load(wroot);
+Check("Add/Save/Load 往返：3600 秒原样回来",
+      WorkTimeStore.SecondsOf(back, "2026-11-17") == 3600,
+      WorkTimeStore.SecondsOf(back, "2026-11-17").ToString());
+Check("往返后账本里只有记过的那一天", back.Days.Count == 1, back.Days.Count.ToString());
+
+// 18.4 多日累加：同一天累加不断段，不同日各记各的（跨午夜就靠这个）
+WorkTimeStore.Add(back, "2026-11-17", 240);
+WorkTimeStore.Add(back, "2026-11-18", 1275);
+WorkTimeStore.Add(back, "2026-11-19", 60);
+WorkTimeStore.Save(wroot, back);
+var back2 = WorkTimeStore.Load(wroot);
+Check("多日累加：同一天两次 Add 累加（3600+240=3840）",
+      WorkTimeStore.SecondsOf(back2, "2026-11-17") == 3840,
+      WorkTimeStore.SecondsOf(back2, "2026-11-17").ToString());
+Check("多日累加：不同自然日各记各的（18 日 1275、19 日 60）",
+      WorkTimeStore.SecondsOf(back2, "2026-11-18") == 1275
+      && WorkTimeStore.SecondsOf(back2, "2026-11-19") == 60,
+      WorkTimeStore.SecondsOf(back2, "2026-11-18") + "/" + WorkTimeStore.SecondsOf(back2, "2026-11-19"));
+Check("多日累加：账本一共 3 天", back2.Days.Count == 3, back2.Days.Count.ToString());
+
+// 18.5 原子写：.tmp 只是过程，落完不能留在目录里
+Check("Save 后 .yitai 里没有 .tmp 残留",
+      Directory.GetFiles(ProjectLayout.Private(wroot), "*.tmp").Length == 0,
+      string.Join(", ", Directory.GetFiles(ProjectLayout.Private(wroot), "*.tmp")));
+
+// 18.6 只新增文件：旧结构一个字不动，旧项目照常打开
+string projBefore = File.ReadAllText(ProjectLayout.ProjectFile(wroot));
+bool reopenedOk = false;
+try { reopenedOk = ProjectStore.Open(wroot).Meta.Name == "旧项目"; } catch { reopenedOk = false; }
+Check("有 worktime.json 的项目照常打开", reopenedOk);
+Check("计时账本没动 project.json 一个字",
+      File.ReadAllText(ProjectLayout.ProjectFile(wroot)) == projBefore);
+
+// 18.7 边界：没项目时不计时、不落盘；秒数 ≤0 不动账
+Check("空项目根 Load → 空账、不抛", WorkTimeStore.Load("").Days.Count == 0);
+bool saveNoThrow = true;
+try { WorkTimeStore.Save("", new WorkTimeLedger()); } catch { saveNoThrow = false; }
+Check("空项目根 Save 不抛异常", saveNoThrow);
+WorkTimeStore.Add(back2, "2026-11-17", 0);
+WorkTimeStore.Add(back2, "2026-11-17", -5);
+Check("秒数 ≤0 不动账（0 与负数都不记）",
+      WorkTimeStore.SecondsOf(back2, "2026-11-17") == 3840,
+      WorkTimeStore.SecondsOf(back2, "2026-11-17").ToString());
+
+// 18.8 源码锚：T-28 的根因那一行 + 计时口径
+string? panesPath = FindUp("src\\YiTai.App\\MainWindow.Panes.cs");
+Check("MainWindow.Panes.cs 找得到（源码锚）", panesPath != null, panesPath ?? "(没找到)");
+
+if (panesPath != null)
+{
+    string panes = File.ReadAllText(panesPath);
+    Check("源码锚：IsDocumentEnabled = true（T-28 的根因就这一行）",
+          panes.Contains("IsDocumentEnabled = true", StringComparison.Ordinal));
+    Check("源码锚：没有写回 IsDocumentEnabled = false",
+          !panes.Contains("IsDocumentEnabled = false", StringComparison.Ordinal),
+          "写回 false，表格横向滚动条又会变成看得见、点不动");
+}
+
+string? timerPath = FindUp("src\\YiTai.App\\WorkTimer.cs");
+Check("WorkTimer.cs 找得到（源码锚）", timerPath != null, timerPath ?? "(没找到)");
+
+if (timerPath != null)
+{
+    string timer = File.ReadAllText(timerPath);
+
+    var idle = System.Text.RegularExpressions.Regex.Match(timer,
+        @"IdleThreshold\s*=\s*TimeSpan\.FromSeconds\((\d+)\)");
+    Check("源码锚：IdleThreshold = 180 秒（闲置即停的验收口径）",
+          idle.Success && idle.Groups[1].Value == "180",
+          idle.Success ? idle.Groups[1].Value : "(没匹配上)");
+
+    var flush = System.Text.RegularExpressions.Regex.Match(timer,
+        @"FlushEverySeconds\s*=\s*(\d+)");
+    Check("源码锚：每 30 秒落一次盘（崩溃最多丢 30 秒）",
+          flush.Success && flush.Groups[1].Value == "30",
+          flush.Success ? flush.Groups[1].Value : "(没匹配上)");
+
+    Check("源码锚：活动只认键按下 / 鼠标按下 / 滚轮（不挂 PreviewMouseMove）",
+          timer.Contains("PreviewKeyDown") && timer.Contains("PreviewMouseDown")
+          && timer.Contains("PreviewMouseWheel")
+          && !timer.Contains("PreviewMouseMove"),
+          "纯鼠标移动不算活动，别顺手挂上去");
+
+    Check("源码锚：标题时长格式是 h:mm:ss",
+          timer.Contains("{t.Minutes:D2}:{t.Seconds:D2}"), "");
+
+    Check("源码锚：回到前台先等一次新活动才算（_needsActivity 门闩）",
+          timer.Contains("!_needsActivity") && timer.Contains("_needsActivity = false"),
+          "否则切回来的瞬间就抢着数秒，与「激活后有新活动才续算」的口径不符");
+}
+
+try { Directory.Delete(wbox, recursive: true); } catch { }
 
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }

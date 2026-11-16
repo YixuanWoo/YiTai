@@ -64,7 +64,7 @@
                     <Grid Background="Transparent">
                         <Track x:Name="PART_Track" IsDirectionReversed="True">
                             <Track.DecreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False">
+                                <RepeatButton x:Name="PART_Decrease" Command="ScrollBar.PageUpCommand" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="RepeatButton">
                                             <Border Background="Transparent"/>
@@ -109,7 +109,7 @@
                                 </Thumb>
                             </Track.Thumb>
                             <Track.IncreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False">
+                                <RepeatButton x:Name="PART_Increase" Command="ScrollBar.PageDownCommand" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="RepeatButton">
                                             <Border Background="Transparent"/>
@@ -123,6 +123,13 @@
                         <!-- 水平滚动条方向不能反转（否则滑块在右、往左拖），竖向才反转 -->
                         <Trigger Property="Orientation" Value="Horizontal">
                             <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                            <!-- 翻页命令也要跟着换：模板里写死的 PageUp/PageDown 是竖向命令，
+                                 横向条点轨道时 ScrollViewer 不认它们 —— 表现就是"点轨道没反应"。
+                                 换成 PageLeft/PageRight，点轨道左右才真的翻一页（T-28）。 -->
+                            <Setter TargetName="PART_Decrease" Property="Command"
+                                    Value="{x:Static ScrollBar.PageLeftCommand}"/>
+                            <Setter TargetName="PART_Increase" Property="Command"
+                                    Value="{x:Static ScrollBar.PageRightCommand}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

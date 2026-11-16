@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（另有 `ci-pending` 分支，见 T-13） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **176 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **202 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-13 CI、T-14 release.ps1、T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面 |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -47,7 +47,7 @@
 清单：
 
 - [ ] 构建 0 警告 0 错误
-- [ ] 测试全过；项数与上次相比**只增不减**（当前 176；删测试要说明理由）
+- [ ] 测试全过；项数与上次相比**只增不减**（当前 202；删测试要说明理由）
 - [ ] `git status` 没有意外的未跟踪文件
 - [ ] TODO 里 `[ ]` 项没有过期承诺；勾掉的项写了**验证方式**（命令 + 看到的结果）
 - [ ] 依赖没长歪：Core 无 `PackageReference`；App 只有 `Microsoft.Web.WebView2`
@@ -136,6 +136,24 @@
 - 验证证据：`build.ps1` 输出（0 警告 0 错误、176 项全过）；测试覆盖见
   `tests\YiTai.Tests\Program.cs` 第 3、6、7、10、11 节新增断言。
 
+## 8.1 交接验收记录（2026-11-17，T-28 / T-29）
+
+- 接手状态：工作区已有工程岗未提交改动（`MainWindow.Panes.cs`、`MainWindow.xaml.cs`、
+  `ProjectLayout.cs`、新增 `WorkTimer.cs` / `WorkTimeStore.cs`），本单在其上继续，未还原未重写。
+- 结果：构建 **0 警告 0 错误**；冒烟测试 **176 → 202 项**全过；退出码 0；
+  `.\build.ps1 -Release` 出 `dist\YiTai.exe`（59.3 MB）并同步仓库根 `YiTai.exe`。
+- 本单修的缺陷（TODO 第八批 T-28 / T-29）：
+  1. 只读渲染控件 `IsDocumentEnabled=false` 让表格内嵌滚动条收不到鼠标（看得见点不动）；
+  2. 横向滚动条轨道翻页按钮绑了竖向 `PageUp/PageDown`，横向条上点轨道毫无反应（真机验证时发现）；
+  3. 工作计时切回前台即开始数秒，与"激活后有新活动才续算"的口径不符（真机验证时发现）。
+- 新增断言：`tests` 第 15 节 2 条（横向两段轨道分别绑 PageLeft/PageRight）、
+  第 18 节 24 条（工作计时落盘的缺文件/坏 JSON/往返/多日/无 `.tmp`/旧项目/源码锚等）。
+- 真机验收：`samples\demo` + 宽表材料；滚动条拖 Thumb / 点轨道左右翻页 / 拖到两端全部生效；
+  计时 0:00:00 → 活动后增长 → 失焦冻结 → 回来动一下续算；关窗时账本 360 → 384 秒。
+- 数据安全：验证前备份 `%APPDATA%\YiTai\settings.json` 与 `samples\demo`，
+  验证后逐字节恢复（sha256 与 mtime 均与备份一致，`.yitai` 新增目录已删除）。
+- 未提交：按红线不做 git 提交/推送，改动留给工程岗审查后统一提交。
+
 ## 9. 需要人拍板的事
 
 1. **T-13 CI**：要不要现在刷新 token 的 `workflow` 权限（否则 CI 只能停在 `ci-pending` 分支）。
@@ -171,7 +189,7 @@
 |---|---|---|
 | `-RepoRoot` | 脚本所在 `tools\` 的上一层 | 仓库根；一般不用给 |
 | `-BuildScript` | `build.ps1` | 被体检的构建脚本，相对仓库根解析（造失败用例就改它） |
-| `-ExpectedTestCount` | `176` | 冒烟测试项数下限；少于它判失败，多于它通过并在摘要里标出 |
+| `-ExpectedTestCount` | `176` | 冒烟测试项数下限；少于它判失败，多于它通过并在摘要里标出（当前实际 202，下限保持接手时的 176） |
 | `-AllowDirty` | 关 | 跳过 git 工作区检查 |
 | `-Json` | 关 | 把 JSON 报告同时写到 stdout |
 | `-OutputPath` | `%TEMP%\yitai-maintenance-<时间戳>.json` | 报告落盘位置 |
@@ -179,7 +197,7 @@
 4 项检查（任一失败即非 0 退出）：
 
 1. **关键文件存在**：`build.ps1`（或 `-BuildScript` 指定的那个）、`docs/MAINTENANCE.md`、`docs/TODO.md`。
-2. **构建 + 冒烟测试**：调 `build.ps1`（Debug），断言退出码 0、`0 个警告 / 0 个错误`、收尾行是 `全部通过 ✓（176 项）`，且项数 ≥ `-ExpectedTestCount`。
+2. **构建 + 冒烟测试**：调 `build.ps1`（Debug），断言退出码 0、`0 个警告 / 0 个错误`、收尾行是 `全部通过 ✓（N 项）`，且项数 ≥ `-ExpectedTestCount`（默认 176 是接手时的下限，当前实际 **202**）。
 3. **Release 构建**：单独跑 `dotnet build YiTai.slnx -c Release`（`build.ps1` 不带 `-Release` 时只编 Debug，Release 的警告没人看，所以这里补一遍），断言退出码 0、0 警告 0 错误。Debug 没过时这一项记「跳过」。
 4. **git 工作区**：只看**代码 / 工程文件**（`src`、`tests`、`dist`、`tools`、`.github`、`build.ps1`、`YiTai.exe`、`*.csproj` / `*.slnx` / `*.ps1` / `*.yml` / `*.xaml` 等）有没有未提交改动。
    文档改动（`*.md`）和未跟踪文件只作提示、不算失败——接手时仓库本来就可能带着没提交的 docs 草稿，写文档也不该把体检搞红。要看细节读 JSON 里的 `docChanges` / `untracked`。
@@ -203,5 +221,5 @@ JSON 报告（`schemaVersion` 1）：
 
 - 只用 Windows 自带 PowerShell 能力，不引第三方模块，脚本自身不联网（构建时的包还原是 `build.ps1` / `dotnet` 的事）。
 - 报告和构建日志都写 `%TEMP%`，不落仓库。
-- 完整构建输出不往屏幕上糊（176 项太长）；失败时 JSON 只带末尾 12 行 `outputTail`，要全的看 `log`。
+- 完整构建输出不往屏幕上糊（近 200 项太长）；失败时 JSON 只带末尾 12 行 `outputTail`，要全的看 `log`。
 - 它替不了人：`samples\demo` 真机开窗口看一眼、依赖没长歪、TODO 承诺没过期、`build.ps1 -Release` 出 exe 并同步，这几条还得照第 3 节人工过。

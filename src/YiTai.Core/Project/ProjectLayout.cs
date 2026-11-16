@@ -33,6 +33,7 @@ public static class ProjectLayout
     public const string PrivateDirName = ".yitai";
     public const string ProgressFileName = "progress.json";
     public const string PaneLayoutFileName = "panes.json";
+    public const string WorkTimeFileName = "worktime.json";
 
     public static string ProjectFile(string root) => Path.Combine(root, ProjectFileName);
     public static string Sources(string root) => Path.Combine(root, SourcesDirName);
@@ -53,6 +54,14 @@ public static class ProjectLayout
     /// 放项目里而不是全局设置，是为了把整个文件夹拷走、换台机器也还是那几栏。
     /// </summary>
     public static string PaneLayoutFile(string root) => Path.Combine(Private(root), PaneLayoutFileName);
+
+    /// <summary>
+    /// 每天工作了多少秒（按自然日累计），放 .yitai\worktime.json。
+    /// 和进度、栏位同理：是"我在这本书上干了多久"，不是书本身的属性。
+    /// **只新增这个文件**：旧项目没有它照样打开（读到"从没记过"就是了），
+    /// project.json 与既有 .yitai 文件的结构一个字都不动。
+    /// </summary>
+    public static string WorkTimeFile(string root) => Path.Combine(Private(root), WorkTimeFileName);
 
     /// <summary>
     /// 建好一个项目"必须有"的空目录（不覆盖已存在的内容）。

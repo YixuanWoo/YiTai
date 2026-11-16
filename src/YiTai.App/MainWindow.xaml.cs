@@ -32,6 +32,7 @@ public partial class MainWindow : Window
 {
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly DispatcherTimer _autoSave = new();
+    private readonly WorkTimer _workTimer = null!;
 
     private ProjectStore? _store;
     private TranslationEntry? _current;   // 当前打开的那篇译文（和源文件没有任何关系）
@@ -50,6 +51,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        _workTimer = new WorkTimer(this);   // 工作计时：键鼠活动才数秒，闲置/失焦即停（T-29）
 
         InitPanes();   // 先摆一排空栏；打开上次项目时再按项目记忆替换
 
@@ -153,7 +156,8 @@ public partial class MainWindow : Window
         _store.SyncTranslations();
         _store.Save();
 
-        Title = $"译台 — {_store.Meta.Name}";
+        _workTimer.BaseTitle = $"译台 — {_store.Meta.Name}";   // 计时后缀由 WorkTimer 拼（T-29）
+        _workTimer.SetProject(_store.Root);
         TxtProject.Text = _store.Meta.Name;
         TxtProjectPath.Text = _store.Root;
 
@@ -811,7 +815,8 @@ public partial class MainWindow : Window
         _doc = null;
         _progress = new ProgressState();   // 没项目就没有进度可言
 
-        Title = "译台";
+        _workTimer.BaseTitle = "译台";
+        _workTimer.SetProject(null);   // 没开项目不计时
         TxtProject.Text = "还没有打开项目";
         TxtProjectPath.Text = "文件 → 新建项目 / 打开项目";
 

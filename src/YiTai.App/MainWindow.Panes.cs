@@ -666,7 +666,13 @@ public partial class MainWindow
         var body = new RichTextBox
         {
             IsReadOnly = true,
-            IsDocumentEnabled = false,        // 别让文里的链接把点击吃掉
+            // 必须是 true：WPF 规定 FlowDocument 里内嵌的 UI 元素（表格 BlockUIContainer
+            // 里的 ScrollViewer/滚动条）只有在 IsDocumentEnabled=true 时才接收鼠标交互。
+            // 之前是 false，表格的横向滚动条看得见却点不动——根因就是这一行（T-28）。
+            // 现在打开它没有副作用：渲染器不产出 Hyperlink（MdRender 全文无链接），
+            // 当年"别让文里的链接把点击吃掉"的顾虑不成立；
+            // 点滚动条不落进度线由 Marker.IsFromScrollBar 豁免。
+            IsDocumentEnabled = true,
             IsUndoEnabled = false,
             AcceptsReturn = false,
             AcceptsTab = false,

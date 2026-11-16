@@ -1,7 +1,7 @@
 # 开发待办 · YiTai
 
-> 整理自 2026-11-12 的设计耦合复查 + 11-14 的仓库整理，11-16 补维护期修复。
-> 快照：`master`、编译 0 警告 0 错误、冒烟测试 176 项全过。
+> 整理自 2026-11-12 的设计耦合复查 + 11-14 的仓库整理，11-16 补维护期修复，11-17 补滚动条与工作计时。
+> 快照：`master`、编译 0 警告 0 错误、冒烟测试 202 项全过。
 
 ## 怎么用这份清单
 
@@ -286,6 +286,62 @@
   脚本算了 `$root` 却没切过去，`dotnet run` 继承调用者的 cwd；冒烟测试第 15/16 节要从当前目录
   往上找 `Theme.xaml`，在别的目录（例如看板的任务目录）调用会误报 3 项失败。
   *完成*：脚本开头 `Set-Location -LiteralPath $root`；从仓库外的目录调用验证 176 项全过。
+
+---
+
+## 第八批：滚动条与工作计时（2026-11-17）
+
+> 用户报了两件事：宽表的横向滚动条"看得见、点不动"；需要"在这本书上干了多久"的计时。
+> 测试 176 → 202 项（新增 26 条：滚动条命令源码锚 2 条、工作计时落盘 24 条）。
+
+- [x] **T-28 宽表横向滚动条"看得见、点不动"（已完成）**
+  症状：GFM 表格自带的那条横向滚动条画得出来，但拖滑块、点轨道都没反应。
+  根因：`src\YiTai.App\MainWindow.Panes.cs` 里只读渲染控件的 `IsDocumentEnabled = false`。
+  WPF 规定 `FlowDocument` 里内嵌的 UI 元素（表格 `BlockUIContainer` 里的
+  `ScrollViewer`/滚动条）只有它为 `true` 时才接收鼠标交互；之前两轮修的 9px 压扁、
+  Track 方向都只是伴随问题，不是"点不动"的原因。渲染器不产出 `Hyperlink`，打开无副作用；
+  点滚动条不落进度线由 `Marker.IsFromScrollBar` 挡掉。
+  连带修（真机验证时发现）：横向模板的翻页按钮绑的是竖向 `PageUp/PageDown`，
+  横向条上 `ScrollViewer` 不认这两个命令 → 点轨道左右都没反应。改为在
+  `Orientation=Horizontal` 的模板触发器里把 `PART_Decrease/PART_Increase` 换成
+  `PageLeft/PageRight`。
+  *完成*：`IsDocumentEnabled = true`；`Theme.xaml` 两个 `RepeatButton` 加名并换横向命令；
+  测试第 15 节新增 2 条源码锚（两段轨道分别绑 PageLeft/PageRight），第 18 节新增
+  "IsDocumentEnabled = true" 与"没有写回 false" 2 条源码锚。
+  *验证方式*：
+  ① `.\build.ps1` → 0 警告 0 错误、202 项全过、退出码 0；
+  ② 真机（`samples\demo` + 宽表材料）：初始 Thumb 在 x=21..405；拖 Thumb → 410..794；
+     点轨道右段 → 410..794、点轨道左段 → 21..405；拖到最右 → 562..946、拖到最左 → 21..405；
+     每步截图存 `%TEMP%\yitai-verify`；
+  ③ 源码锚断言见 `tests\YiTai.Tests\Program.cs` 第 15、18 节。
+  *未做*：不做像素级滚动条自动化回归（界面回归靠人，见 `MAINTENANCE.md` 第 3 节）。
+
+- [x] **T-29 工作计时（按自然日记账）（已完成）**
+  需求原文：工作状态下计时——键鼠操作、点选、设置进度、滚动视窗、输入都算活动；
+  窗口一段时间没动作、或最小化/未激活就停；界面上要显示本次工作了多久。
+  *完成*：
+  ① Core：新增 `src\YiTai.Core\Project\WorkTimeStore.cs` 与 `ProjectLayout.WorkTimeFileName`，
+     账本 `<项目根>\.yitai\worktime.json` = `{ "Version":1, "Days":{ "yyyy-MM-dd": 秒 } }`；
+     原子写（`.tmp` → `File.Move(overwrite)`）；文件缺失/内容损坏一律返回空账、不抛异常；
+     **只新增这一个文件**，`project.json` 与既有 `.yitai` 文件一个字不动，老项目照常打开。
+  ② App：新增 `src\YiTai.App\WorkTimer.cs`，`MainWindow.xaml.cs` 构造时创建、`OpenProject`/`SetEmptyState`
+     时换账；活动证据走 `PreviewKeyDown / PreviewMouseDown / PreviewMouseWheel`（**不挂 `PreviewMouseMove`**）；
+     闲置 180 秒（`IdleThreshold`）或失焦/最小化立即暂停；回到前台**先有新活动**才续算
+     （`_needsActivity` 门闩）；每 30 秒 + 关窗 + 换项目落盘；标题追加「· 工作 h:mm:ss」；
+     没开项目不计时、不落盘；不提供手动暂停/清零。
+  ③ 真机发现的口径偏差：第一版切回前台就立刻数秒（`_lastActivity` 还在 180 秒窗口内），
+     与"激活后有新活动才续算"不符；已补门闩并加 1 条源码锚。
+  *验证方式*：
+  ① `.\build.ps1` → 0 警告 0 错误、202 项全过、退出码 0；第 18 节 24 条断言覆盖
+     缺文件/损坏 JSON/Add-Save-Load 往返/多日累加/无 `.tmp` 残留/旧项目照常打开/
+     `project.json` 未动/空项目根/秒数 ≤0/源码锚；
+  ② 真机计时（`samples\demo`）：启动未操作 0:00:00 → 点一下 6 秒后 0:00:06；
+     切到别的程序 8 秒后 0:00:07、再过 6 秒仍 0:00:07；切回未动 6 秒仍 0:00:07；
+     动一下 6 秒后 0:00:13（累加、不断段、不重置）；
+  ③ 关窗后 `.yitai\worktime.json` 从 360 秒变 384 秒（关窗落盘生效）；
+  ④ 180 秒闲置暂停「按口径实现，未干等 3 分钟」；失焦即停已实测。
+  *边界*：不提供手动暂停/清零（要清零删 `worktime.json`）；"本次"时长只在内存，重启从零，
+  按天的账不丢；跨午夜按当时自然日入账。
 
 ---
 
