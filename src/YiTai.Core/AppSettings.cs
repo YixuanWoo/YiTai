@@ -78,7 +78,18 @@ public sealed class AppSettings
         try
         {
             if (!File.Exists(DefaultPath)) return new AppSettings();
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(DefaultPath), Options) ?? new AppSettings();
+
+            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(DefaultPath), Options)
+                           ?? new AppSettings();
+
+            // 手改过 / 别的版本写坏的 settings.json 里，集合字段可能是 null。
+            // 不兜这一下，界面下一次碰 RecentRefFiles 或 PanesByProject 就会空引用。
+            settings.LastProjectRoot ??= "";
+            settings.LastTranslationId ??= "";
+            settings.RecentRefFiles ??= new List<string>();
+            settings.PanesByProject ??= new Dictionary<string, List<RefDocSpec>>();
+            settings.PaneWeightsByProject ??= new Dictionary<string, List<double>>();
+            return settings;
         }
         catch
         {

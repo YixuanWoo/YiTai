@@ -2,14 +2,16 @@
 // Program.cs —— 冒烟测试（不开窗口，只测 Core）
 // ============================================================
 //
-// 测试的是"软件作为软件"该守住的那些规矩，而不是某个界面的样子：
-//   1. 新建项目 → 目录齐全、project.json 可读
-//   2. 导入源文件 → 复制进 sources、登记、自动建空译文
-//   3. 同名再导入 → 不覆盖，改名为 (2)
-//   4. 保存译文 → 换行/BOM 保持，空稿拒绝
-//   5. 外部改动 → 抛冲突，不静默覆盖
-//   6. 另存为 → 项目清单里的指向跟着改
-//   7. 设置读写
+// 这套测试守的是"软件作为软件"该守的规矩，而不是某个界面的样子：
+//   1-6   项目与译文：新建、收稿（同名不覆盖）、保存（换行/BOM/空稿）、
+//         冲突不覆盖、改名、新建译文与自然排序
+//   7     设置读写（含旧字段、null 字段的兼容）
+//   8     仓库自带样例项目的完整性
+//   9-10  旧项目兼容、归档按需建、栏位折叠、读不了的文件不崩
+//   11-14 Markdown 渲染：==高亮==、软换行、GFM 管道表；句子切分
+//   12    进度键绑文件路径（含旧裸键的迁移与认领）
+//   15-16 滚动条样式、进度高亮图层的回归断言（读源码文本，不画窗口）
+//   17    区间运算 RangeMath（底带给 ==高亮== 让路）
 //
 // 退出码 0 = 全过，1 = 有失败。
 // ============================================================
@@ -135,6 +137,24 @@ Check("备份目录里出现了今天的备份",
       Directory.GetFiles(ProjectLayout.Backups(root)).Length > 0,
       Directory.GetFiles(ProjectLayout.Backups(root)).Length.ToString());
 
+// 备份名必须保留原扩展名：.md 与 .txt 同名时，不能抢同一个备份名（后保存的那份会当天没有备份）
+string bkDir = Path.Combine(box, "备份-同名不同扩展名");
+Directory.CreateDirectory(bkDir);
+string sameMd = Path.Combine(box, "同名.md");
+string sameTxt = Path.Combine(box, "同名.txt");
+File.WriteAllText(sameMd, "md 版\n");
+File.WriteAllText(sameTxt, "txt 版\n");
+var backupDay = new DateTime(2026, 11, 16, 10, 0, 0);
+string? bkMd = TextFile.BackupOncePerDay(sameMd, bkDir, backupDay);
+string? bkTxt = TextFile.BackupOncePerDay(sameTxt, bkDir, backupDay);
+Check("同名不同扩展名各备份一份",
+      bkMd != null && bkTxt != null && Directory.GetFiles(bkDir).Length == 2,
+      Directory.GetFiles(bkDir).Length.ToString());
+Check("备份保留原扩展名",
+      bkMd?.EndsWith(".md", StringComparison.Ordinal) == true
+      && bkTxt?.EndsWith(".txt", StringComparison.Ordinal) == true,
+      (bkMd ?? "(null)") + " / " + (bkTxt ?? "(null)"));
+
 // ============================================================ 5. 改译文名
 Console.WriteLine("\n== 5. 改译文名 ==");
 var renamed = store.RenameTranslation(added, "第01章-初稿");
@@ -154,6 +174,10 @@ Console.WriteLine("\n== 6. 新建译文 / 外部新增 / 自然排序 ==");
 var fresh = reopened.NewTranslation("第二章");
 Check("新建的译文落地了", File.Exists(reopened.TranslationAbsPath(fresh)), fresh.FileName);
 Check("空译文就是空文件", File.ReadAllText(reopened.TranslationAbsPath(fresh)).Length == 0);
+Check("新建译文后「上次打开」指向清单里真实存在的那一条",
+      reopened.Meta.LastTranslationId == fresh.Id
+      && reopened.Meta.Translations.Exists(t => t.Id == reopened.Meta.LastTranslationId),
+      reopened.Meta.LastTranslationId ?? "(null)");
 
 var dup = reopened.NewTranslation("第二章");
 Check("同名的自动加 (2)", dup.FileName == "第二章 (2).md", dup.FileName);
@@ -187,6 +211,16 @@ File.WriteAllText(AppSettings.DefaultPath,
 var stLegacy = AppSettings.Load();
 Check("旧 settings.json 多出 LastSourceId 也照读",
       stLegacy.LastProjectRoot == root && stLegacy.AutoSaveDelayMs == 1500, stLegacy.LastProjectRoot);
+
+// 集合字段被写成 null（手改、或别的版本写坏）：读回来必须还是空集合，不能是 null
+File.WriteAllText(AppSettings.DefaultPath,
+    "{\n  \"LastProjectRoot\": null,\n  \"RecentRefFiles\": null,\n" +
+    "  \"PanesByProject\": null,\n  \"PaneWeightsByProject\": null\n}");
+var stNull = AppSettings.Load();
+Check("settings.json 的集合字段为 null 也不炸",
+      stNull.LastProjectRoot == "" && stNull.RecentRefFiles != null
+      && stNull.PanesByProject != null && stNull.PaneWeightsByProject != null,
+      stNull.RecentRefFiles == null ? "RecentRefFiles 是 null" : "ok");
 
 // ============================================================ 9. 旧项目兼容（T-9 / T-10）
 Console.WriteLine("\n== 9. 旧项目兼容（T-9 / T-10）==");
@@ -292,6 +326,13 @@ Check("文件被独占时返回 Locked 而不是抛异常", lockedOk);
 
 Check("空路径返回 InvalidPath", TextFile.Read("").State == TextReadState.InvalidPath);
 
+// 目录：File.Exists(目录) 恒为 false，所以必须先判 Directory.Exists；
+// 否则用户把栏位指到文件夹，只会看到"文件不在了"，真正的错因被盖掉。
+var dirInfo = TextFile.Read(box);
+Check("路径是文件夹时明确报 InvalidPath（不是「文件不在了」）",
+      dirInfo.State == TextReadState.InvalidPath && dirInfo.Problem.Contains("文件夹", StringComparison.Ordinal),
+      dirInfo.State + " / " + dirInfo.Problem);
+
 // ============================================================ 11. ==高亮== 的解析
 Console.WriteLine("\n== 11. ==高亮== 的解析 ==");
 
@@ -325,7 +366,7 @@ var crossDoc = MdParser.Parse("第一行 == 开头\n第二行 结尾 ==\n");
 Check("跨行：并成一段", crossDoc.Blocks.Count == 1 && crossDoc.Blocks[0].Kind == MdBlockKind.Paragraph,
       crossDoc.Blocks.Count.ToString());
 Check("跨行：不产生高亮", CountKind(crossDoc.Blocks[0].Inlines, MdInlineKind.Highlight) == 0);
-Check("跨行：两对 == 都原样留着", Flat(crossDoc.Blocks[0].Inlines) == "第一行 == 开头 第二行 结尾 ==",
+Check("跨行：两对 == 都原样留着", Flat(crossDoc.Blocks[0].Inlines) == "第一行 == 开头第二行 结尾 ==",
       Flat(crossDoc.Blocks[0].Inlines));
 
 // 11.5 与粗体嵌套：先认到谁，就只解析那一层（当前行为，不做内层二次解析）
@@ -355,6 +396,20 @@ Check("baseOffset 叠加正确", First(off, MdInlineKind.Highlight)?.SourceOffse
 // 11.9 转义：\== 就是两个普通等号，不配成高亮
 var esc = MdParser.ParseInlines("\\==");
 Check("转义后不当高亮", CountKind(esc, MdInlineKind.Highlight) == 0 && Flat(esc) == "==", Flat(esc));
+
+// 11.10 段落内软换行：中日韩文字两侧直接拼（不插半角空格），西文之间仍补一个空格。
+// 这是文件头写明的承诺，之前实现里无条件补空格，中文按行折行的资料会每行多一个空格。
+var cjkWrap = MdParser.Parse("第一行中文\n第二行中文\n");
+Check("中文软换行直接拼，不插半角空格",
+      Flat(cjkWrap.Blocks[0].Inlines) == "第一行中文第二行中文", Flat(cjkWrap.Blocks[0].Inlines));
+
+var latinWrap = MdParser.Parse("first line\nsecond line\n");
+Check("西文软换行仍补一个空格",
+      Flat(latinWrap.Blocks[0].Inlines) == "first line second line", Flat(latinWrap.Blocks[0].Inlines));
+
+var mixedWrap = MdParser.Parse("hello\n中文\n");
+Check("一侧是中文就直接拼",
+      Flat(mixedWrap.Blocks[0].Inlines) == "hello中文", Flat(mixedWrap.Blocks[0].Inlines));
 
 // ============================================================ 12. 进度键绑文件路径（T-11）
 Console.WriteLine("\n== 12. 进度键绑文件路径（T-11）==");

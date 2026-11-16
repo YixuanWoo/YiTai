@@ -92,10 +92,12 @@ public sealed class ProjectStore
 
         // 缺字段兜底：旧文件读进来也能用
         if (meta.Schema < 2) meta.Schema = 2;   // 旧格式（还带 Sources / TranslationPath）→ 标记成新格式
+        meta.Name ??= "未命名项目";
         meta.Translations ??= new List<TranslationEntry>();
+        meta.Translations.RemoveAll(t => t == null);   // 手改坏的清单里可能有 null 元素
         foreach (var t in meta.Translations)
         {
-            if (t.Id.Length == 0) t.Id = Guid.NewGuid().ToString("N").Substring(0, 8);
+            if (string.IsNullOrEmpty(t.Id)) t.Id = Guid.NewGuid().ToString("N").Substring(0, 8);
             t.FileName ??= "";
             t.Note ??= "";
         }
@@ -147,6 +149,7 @@ public sealed class ProjectStore
         onDisk.Sort(StringComparer.OrdinalIgnoreCase);
 
         Meta.Translations ??= new List<TranslationEntry>();
+        Meta.Translations.RemoveAll(t => t == null);   // 手改坏的清单里可能有 null 元素
 
         // 磁盘上没有的，从清单里去掉（文件被删/改名了，下拉就不该再留着它）
         Meta.Translations.RemoveAll(t =>
@@ -164,7 +167,7 @@ public sealed class ProjectStore
 
         foreach (var t in Meta.Translations)
         {
-            if (t.Id.Length == 0) t.Id = Guid.NewGuid().ToString("N").Substring(0, 8);
+            if (string.IsNullOrEmpty(t.Id)) t.Id = Guid.NewGuid().ToString("N").Substring(0, 8);
             t.FileName ??= "";
             t.Note ??= "";
         }
@@ -226,14 +229,16 @@ public sealed class ProjectStore
 
         var entry = new TranslationEntry { FileName = fileName };
         var list = SyncTranslations();
-        Meta.LastTranslationId = entry.Id;
-        Save();
 
-        // SyncTranslations 可能新建了同名的另一条，返回清单里那一条，保证 Id 一致
+        // 清单里的那一条才是真身：SyncTranslations 会新建 TranslationEntry，带的是另一个 Id。
+        // 这里若写临时 entry 的 Id，project.json 里"上次打开的译文"就会指向一个不存在的 Id。
+        TranslationEntry saved = entry;
         foreach (var t in list)
-            if (string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase)) return t;
+            if (string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase)) { saved = t; break; }
 
-        return entry;
+        Meta.LastTranslationId = saved.Id;
+        Save();
+        return saved;
     }
 
     /// <summary>

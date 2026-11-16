@@ -56,19 +56,21 @@ public static class TextFile
 
         try
         {
-            if (!File.Exists(path))
-            {
-                info.Exists = false;
-                info.State = TextReadState.Missing;
-                info.Problem = "文件不在了（可能被移走、改名或删除）。";
-                return info;
-            }
-
+            // 先判目录：File.Exists(目录) 恒为 false，若先判文件，这一档就永远走不到，
+            // 用户把栏位指到一个文件夹时只会看到"文件不在了"，找不到真正的原因。
             if (Directory.Exists(path))
             {
                 info.Exists = true;
                 info.State = TextReadState.InvalidPath;
                 info.Problem = "这个路径是一个文件夹，不是文件。";
+                return info;
+            }
+
+            if (!File.Exists(path))
+            {
+                info.Exists = false;
+                info.State = TextReadState.Missing;
+                info.Problem = "文件不在了（可能被移走、改名或删除）。";
                 return info;
             }
 
@@ -205,8 +207,11 @@ public static class TextFile
     // ---------------------------------------------------------------- 备份
 
     /// <summary>
-    /// 每天首次保存前备份一份上一版，命名 `源文件名-工作台-yyyyMMdd.md`。
+    /// 每天首次保存前备份一份上一版，命名 `源文件名-工作台-yyyyMMdd.原扩展名`。
     /// 已经有今天这份就不再重复备份。
+    ///
+    /// 扩展名必须留着：译文可以收 `.txt`，如果备份一律写成 `.md`，
+    /// `笔记.md` 与 `笔记.txt` 会抢同一个备份名，后保存的那份当天就悄悄没有备份了。
     /// </summary>
     public static string? BackupOncePerDay(string path, string backupDir, DateTime now)
     {
@@ -216,7 +221,7 @@ public static class TextFile
 
         string stem = Path.GetFileNameWithoutExtension(path);
         string stamp = now.ToString("yyyyMMdd");
-        string dest = Path.Combine(backupDir, $"{stem}-工作台-{stamp}.md");
+        string dest = Path.Combine(backupDir, $"{stem}-工作台-{stamp}{Path.GetExtension(path)}");
 
         if (File.Exists(dest)) return null;
 

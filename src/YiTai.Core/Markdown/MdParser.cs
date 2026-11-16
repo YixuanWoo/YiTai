@@ -10,7 +10,7 @@
 //   · 认不出来的行一律进段落，绝不吞字
 //
 // 软换行（段落里连续几行）合并成一段：西文之间补一个空格，
-// 只要有一侧是中文就直接拼 —— 免得中文段落里冒出半角空格。
+// 只要有一侧是中日韩文字就直接拼 —— 免得中文段落里冒出半角空格。
 // ============================================================
 
 using System;
@@ -48,12 +48,15 @@ public static class MdParser
             var b = new MdBlock { Kind = MdBlockKind.Paragraph, SourceOffset = paraStart };
 
             // 段内的软换行照 Markdown 的规矩拼回去（一个空格），排版与"不标记"时完全一样；
+            // 但中日韩文字两侧直接拼，不补空格 —— 中文稿按行折行后，渲染出来不该每行之间多一个半角空格。
             // 每一截都带着自己的文档偏移，竖线因此能落在段中间某句话上。
             for (int i = 0; i < paraLines.Count; i++)
             {
                 if (i > 0)
                 {
-                    var gap = MdInline.Plain(" ");
+                    bool tight = IsCjk(LastTextChar(paraLines[i - 1].Inlines))
+                              || IsCjk(FirstTextChar(paraLines[i].Inlines));
+                    var gap = MdInline.Plain(tight ? "" : " ");
                     gap.SourceOffset = paraLines[i].SourceOffset - 1;   // 那个换行符的位置
                     b.Inlines.Add(gap);
                 }
@@ -635,8 +638,32 @@ public static class MdParser
     private static bool UnderscoreOk(string s, int i)
         => i == 0 || !char.IsLetterOrDigit(s[i - 1]);
 
+    /// <summary>行内片段里第一个渲染出来的字；整行没有文字时返回 '\0'。</summary>
+    private static char FirstTextChar(List<MdInline> inlines)
+    {
+        foreach (var inl in inlines)
+            if (inl.Text.Length > 0) return inl.Text[0];
+        return '\0';
+    }
+
+    /// <summary>行内片段里最后一个渲染出来的字；整行没有文字时返回 '\0'。</summary>
+    private static char LastTextChar(List<MdInline> inlines)
+    {
+        for (int i = inlines.Count - 1; i >= 0; i--)
+            if (inlines[i].Text.Length > 0) return inlines[i].Text[^1];
+        return '\0';
+    }
+
+    /// <summary>
+    /// 这个字是不是"可以直接和后一个字拼、不用补空格"的东亚文字。
+    /// 判据是 Unicode 区段，不是语言：中日韩混排、全角标点都按同一套规矩走。
+    /// </summary>
     private static bool IsCjk(char c)
-        => (c >= '\u4E00' && c <= '\u9FFF')
-        || (c >= '\u3000' && c <= '\u303F')
-        || (c >= '\uFF00' && c <= '\uFFEF');
+        => (c >= '\u3000' && c <= '\u303F')     // CJK 标点
+        || (c >= '\u3040' && c <= '\u30FF')     // 平假名 / 片假名
+        || (c >= '\u3400' && c <= '\u4DBF')     // CJK 扩展 A
+        || (c >= '\u4E00' && c <= '\u9FFF')     // CJK 基本区
+        || (c >= '\uAC00' && c <= '\uD7AF')     // 谚文音节
+        || (c >= '\uF900' && c <= '\uFAFF')     // CJK 兼容表意文字
+        || (c >= '\uFF00' && c <= '\uFFEF');    // 全角字符
 }
