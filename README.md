@@ -165,6 +165,9 @@ dotnet run --project tests\YiTai.Tests   # 冒烟测试，退出码 0 = 全过
 
 不想装 SDK 的话，直接去 [Releases](https://github.com/YixuanWoo/YiTai/releases) 下 `YiTai.exe` 单文件，双击就跑。
 
+维护者（包括以后接手的人 / AI）先读 [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)：
+构建门禁、定期体检清单、发布流程、数据安全红线都在那里。
+
 设置文件在 `%APPDATA%\YiTai\settings.json`（上次的项目、窗口尺寸、自动保存间隔）。
 栏位摆法与每栏放的文件、显示比例跟着项目走，记在项目内的 `.yitai\panes.json`。
 
