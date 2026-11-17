@@ -9,11 +9,11 @@
 |---|---|
 | 平台 | Windows / WPF / .NET SDK 10（`net10.0-windows`） |
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
-| 分支 | `master`（ci.yml 已在本地 master 入库、待授权后推送，见 T-13；`ci-pending` 是旧分支，不合并） |
+| 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
 | 冒烟测试 | **202 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
-| 未完成 | T-13 CI、T-14 release.ps1、T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面 |
+| 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
 
 ## 1. 红线（改动前先确认没踩）
@@ -80,7 +80,7 @@
 
 | 事项 | 现状 / 处理 |
 |---|---|
-| CI 不绿（T-13） | `ci.yml` 已在本地 master 入库（`b663114`，门禁加严版），推送卡在 token 缺 `workflow` scope；授权（`gh auth refresh -h github.com -s workflow` 或网页粘贴）后一次 `git push` 即触发 |
+| CI 红灯（T-13 已绿） | 2026-11-17 起 CI 真跑且绿（run 44001556402，success）。以后若变红：先看是真警告/真测试失败还是 runner 的 .NET SDK 版本差异，**修问题，不许改 yml 断言凑绿**（`-warnaserror` 与「≥202」是底线） |
 | 根目录 exe 与 dist 不同步 | `build.ps1 -Release` 已自动复制；程序运行中复制失败只警告，别当发布失败 |
 | 测试 15/16 找不到源码 | 这两节从**当前目录往上**找 `Theme.xaml`。`build.ps1` 已 `Set-Location` 到仓库根；直接 `dotnet run` 时要在仓库根跑 |
 | 行号只标逻辑行 | 设计取舍，见 README；不是 bug |
@@ -172,12 +172,31 @@
   （0 警告 0 错误，有警告即红）；③ 冒烟测试（非 0 退出即红，且项数 < 202 即红）。
   红绿以 Actions 页面为准，不再依赖"本地跑没跑门禁"的口头声明。
 - 文档同步：TODO 的 T-13 条目与"前置动作表"已按本记录更新。
+- **勘误（2026-11-17 复核）**：本节首行的「本地 HEAD = origin = c6c6604、0/0、昨晚已推送」
+  有误——复核时实测本地 HEAD 已是 `815759d`、ahead 2（b663114 + 815759d 均未推）。
+  以 8.3 与 Actions 页面为准。
+
+## 8.3 交接验收记录（2026-11-17，T-13 CI 闭环：授权 → 推送 → CI 全绿）
+
+- 授权：屋主授权执行席位操作命令行，`gh auth refresh -h github.com -s workflow`
+  （设备码流程，一次性代码 1771-540B，约 1 分钟）；token scopes 由 `gist, read:org, repo`
+  增至含 **`workflow`**。
+- 推送：`git push origin master` 成功，`c6c6604..815759d`（含 ci.yml 入库与文档同步两个提交）。
+- **首个 CI run 全绿**：run `44001556402`（event=push，sha `815759d`），
+  2026-11-17 02:14:53Z → 02:15:59Z，**conclusion=success**，用时 66 秒，
+  https://github.com/YixuanWoo/YiTai/actions/runs/44001556402 。
+  CI 日志末行原文：「全部通过 ✓（202 项）」「冒烟测试 202 项全过（基线 202 项）✓」。
+  编译步骤 `-warnaserror` 下零警告零错误。门禁未放宽（无跳过测试 / continue-on-error / 屏蔽警告）。
+- 本地等效留证（推送前）：Debug 构建 `0 个警告 / 0 个错误`、冒烟 202 项全过、退出码 0；
+  CI 冒烟步骤脚本本地逐字模拟通过。日志备查：任务 output 目录 `logs/gate-20261117-t465.log`。
+- 本记录随 commit `[T-13] CI 首跑全绿` 推送，会再触发一次 CI（文档改动，预期同样绿）。
+- 文档同步：TODO 的 T-13 已勾选并写明 run 编号与链接；§0 / §6 / §9 同步为已闭环状态。
 
 ## 9. 需要人拍板的事
 
-1. **T-13 CI**：刷新 token 的 `workflow` 权限（`gh auth refresh -h github.com -s workflow`，
-   浏览器输一次性代码，约半分钟）或网页 Add file 粘贴 yml；授权后一次 `git push origin master`
-   即触发首个 CI run（yml 已在本地入库，commit `b663114`）。
+1. **~~T-13 CI~~（已拍板并完成，2026-11-17）**：屋主授权 `workflow` scope
+   （`gh auth refresh`，浏览器输一次性代码）后一次 `git push origin master` 即触发首个 run
+   并全绿（run 44001556402）。T-13 闭环，不再是待拍板项。
 2. **T-14 / T-15**：release.ps1 与代码签名做不做（签名要自备证书）。
 3. **T-17**：大文件性能现在做还是等真实卡顿反馈。
 4. **项目归属**：YiTai 目前不在 AICompany 的项目配置里。若要纳入公司项目管理，

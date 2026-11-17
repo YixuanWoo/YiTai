@@ -163,18 +163,19 @@
 
 ## 第三批：发布与体验
 
-- [ ] **T-13 CI 落地（2026-11-17：yml 已在本地入库，推送仍卡 token 缺 `workflow` scope，待拍板）**
-  `.github/workflows/ci.yml` 已在本地 master 入库（commit `b663114`，提交信息带 [T-13]），
+- [x] **T-13 CI 落地（已完成，2026-11-17：CI 真跑且绿，run 44001556402）**
+  `.github/workflows/ci.yml` 已入库（commit `b663114`，提交信息带 [T-13]），
   门禁只加严不加宽：编译加 `-warnaserror`（警告一律按错误处理，钉死 0 警告 0 错误）；
   冒烟测试断言收尾行为「全部通过 ✓（N 项）」且 **N ≥ 202**（当前基线，只增不减，防删测试凑绿）；
   非 0 退出即失败；无跳过测试、无 continue-on-error、无屏蔽警告。
-  本地留证（2026-11-17）：Debug 构建 0 个警告 0 个错误、退出码 0；冒烟 202 项全过；
-  CI 冒烟步骤脚本在本地逐字模拟通过（正则命中「全部通过 ✓（202 项）」）。
-  推送实测仍被远端拒绝：`refusing to allow an OAuth App to create or update workflow
-  … without workflow scope`（推送 token 只有 repo / gist / read:org，没有 workflow）。
-  两条授权路：网页 Add file 粘贴，或 `gh auth refresh -h github.com -s workflow`
-  （浏览器输一次性代码，约半分钟）；授权后 `git push origin master` 一次推送即触发首个 CI run。
-  *验收*：一次 push 后 Actions 绿勾。
+  *完成*：授权 `gh auth refresh -h github.com -s workflow` 后一次 `git push origin master`
+  （`c6c6604..815759d`）触发首个 run：**run 44001556402，conclusion=success**，
+  2026-11-17 02:14:53Z–02:15:59Z（66 秒），
+  https://github.com/YixuanWoo/YiTai/actions/runs/44001556402 ；
+  CI 日志末行原文「全部通过 ✓（202 项）」「冒烟测试 202 项全过（基线 202 项）✓」。
+  *以后每次推送*：push / PR 到 master 自动跑 restore → `-warnaserror` 编译 → 冒烟
+  （≥ 202、非 0 退出即红），红绿以 Actions 页面为准，不再依赖本地口头声明。
+  *验收*：一次 push 后 Actions 绿勾 —— **已达成**。
 
 - [x] **T-14 `release.ps1`（已完成，2026-11-16；远端挂 Release 仍未做，见条目末尾的边界）**
   一条命令做完：校验版本号 → 查工作区（脏且没给 `-AllowDirty` 就中止）→ 跑门禁 `build.ps1`
