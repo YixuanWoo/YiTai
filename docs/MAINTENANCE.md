@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **254 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **273 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -222,6 +222,42 @@
   与开工基线逐字节一致；真机走 `%TEMP%` 沙箱 + `YITAI_CONFIG_DIR`，沙箱账本落盘 42 秒（口径未改的旁证）。
 - 文档同步：README「用起来」快捷键行、「已知边界」新增省略号与高亮整句两条、
   计时口径表"显示"行补状态栏；TODO 第九批 T-30~T-34 已勾选并写验证方式；CHANGELOG 追加五项。
+
+## 8.5 交接验收记录（2026-11-17，T-1301cc93：T-35 / T-36）
+
+- **缺陷一（用户实测）**：英文资料里点间带空格的省略号 `. . .` 仍被切成多句。
+  复现（`%TEMP%` 沙箱 4 栏英文材料 + `YITAI_CONFIG_DIR` 重定向）：
+  `He paused . . . then he left.` 把进度线落在 `. . .` 上，栏底读「第 1/4 句」，
+  要连按「下一句」几次才跨得过去；高亮只覆盖单个 `.`（截图
+  `output\repro-before\02-c-spaced-after3z.png`，读数 `readings-before.txt`）。
+  根因：`SentenceIndex.FromPlain` 的省略号 run 扫描（`src\YiTai.Core\Text\SentenceIndex.cs:122-131`，
+  T-30 引入）只认**相邻**的 E 字符，`. . .` 在空格处断链 → 每个 `.` 落回单句号分支各自收句；
+  T-30 那 17 条断言全是连续写法，没覆盖"点间空格"，所以上一轮"修过了"却没拦住英文场景。
+- **修法（T-35）**：连续 run 之外再认"只隔空格/制表符的 E 段链"——
+  累计 ≥3 个点即按一段省略号收句（连同紧随的 T 类收尾与引号括号）；
+  段间夹数字/字母（`Item 1. Item 2.`、`A. B`）不算一串，行为照旧。
+- **缺陷二（T-36）**：状态栏有计时后标题栏仍拼「· 工作 h:mm:ss」，整窗两个计时器。
+  修法：`WorkTimer.RefreshTitle` 只写 `_baseTitle`（「译台 — 项目名」）；
+  状态栏 `OnDisplay` 口径一字未动；原"标题时长格式 h:mm:ss"源码锚改钉到状态栏口径，
+  并新增"标题不再拼时长"锚。
+- **测试**：**254 → 273 项**（第 23 节新增 17 条英文省略号边界：英文句中/句尾三点、`. . .`、
+  `。 。 。`、三点接引号/括号、大写新句，以及 `Mr.`/`e.g.`/`3.14`/`A. B`/普通句号回归；
+  第 18 节 +2 条计时显示锚）。先写失败断言（6 条先红）后改代码，原有 254 条零删改零放宽。
+- **门禁**（本机实测，UTF-8 原始日志落在任务 output：`gate-before-utf8.log` /
+  `gate-after-debug-utf8.log` / `gate-after-release-utf8.log`）：`.\build.ps1` 退出码 0、
+  Debug `0 个警告 / 0 个错误`、冒烟 **254 → 273 项全过**；
+  `dotnet build YiTai.slnx -c Release` 同样 0 警告 0 错误。
+- **真机（改后，同一份沙箱材料）**：`c-spaced` 栏「第 1/2 句」，按一次「下一句」→「第 2/2 句」，
+  高亮从整段 `. . .` 跳到 `then he left.`；标题「译台 — T-1301 英文省略号沙箱」不含时长，
+  状态栏「工作 0:00:0x」是整窗唯一计时（截图 `output\repro-after\00/01/02` 系列、
+  读数 `readings-after7.txt`）。
+- **CI**：推送 `175491a` 触发 `build-and-test` run **44037557117**，**conclusion=success**；
+  https://github.com/YixuanWoo/YiTai/actions/runs/44037557117 。
+- **数据安全**：真机全程 `%TEMP%` 沙箱 + `YITAI_CONFIG_DIR`；验证前后真实
+  `%APPDATA%\YiTai\settings.json` 与 `samples\demo` 的 sha256/mtime 逐条一致
+  （证据：任务 output `data-safety-pre.json` / `data-safety-post.json`）。
+- **文档同步**：README「已知边界」省略号一条补点间空格口径、计时表"显示"行改为只在状态栏；
+  TODO 新增第十批 T-35 / T-36（写验证方式）；CHANGELOG 修复/变更各一条；本文件 §0 测试数改 273。
 
 ## 9. 需要人拍板的事
 
