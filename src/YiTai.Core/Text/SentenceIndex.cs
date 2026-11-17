@@ -10,7 +10,8 @@ namespace YiTai.Core;
 /// （[Start, End) 左闭右开），跟 progress.json 里存的是同一套坐标。
 ///
 /// 规则（宁可少切，也不能把 Mr. Smith 切成两句）：
-///  · 句末：. ! ? 。！？…（连续的 … 或 ... 算一个）
+///  · 句末：. ! ? 。！？…（省略号停顿：./…/。 的连续 run，…≥1 或 .≥2 或 。≥2 算一个，
+///    并吞掉紧随的收尾；见 T-30）
 ///  · 句末后的收尾引号/括号 ”’"'）)】」 归给上一句
 ///  · 缩写守卫：Mr. Dr. etc. e.g. U.S. 以及单个大写字母（J.）后面的点不切
 ///  · 小数点不切：3.5 / 10,000.00
@@ -111,19 +112,33 @@ public sealed class SentenceIndex
                         // 缩写里的点：Mr. / e.g. / U.S.
                         if (c == '.' && IsAbbreviationDot(text, j)) { j++; continue; }
 
-                        // 省略号：连续的 … 或 . 算一个句末
-                        if (c == '.')
+                        // 省略号停顿（T-30）：E = { '.' , '…' , '。' } 的极大连续 run（不跨行）。
+                        // run 中 …≥1 或 .≥2 或 。≥2 → 判为省略号停顿：整段 run 只产生**一个**
+                        // 句末边界，并连同紧随的 T 类收尾（T = E ∪ ？！，含收尾引号/括号）一起吞掉
+                        // ——「……！」「。。。？」「他说："……"？」都只算一句。
+                        // 不满足触发条件的单个 '.' / '。' 落到下面的原逻辑，行为不变。
+                        if (c is '.' or '。' or '…')
                         {
                             int k = j;
-                            while (k < len && text[k] == '.') k++;
-                            if (k - j >= 2) { j = k; break; }
-                        }
-                        else if (c == '…')
-                        {
-                            int k = j;
-                            while (k < len && text[k] == '…') k++;
-                            j = k;
-                            break;
+                            while (k < len && text[k] != '\n' && (text[k] is '.' or '。' or '…')) k++;
+
+                            int halfDots = 0, cnDots = 0, marks = 0;
+                            for (int q = j; q < k; q++)
+                            {
+                                if (text[q] == '.') halfDots++;
+                                else if (text[q] == '。') cnDots++;
+                                else marks++;
+                            }
+
+                            if (marks >= 1 || halfDots >= 2 || cnDots >= 2)
+                            {
+                                j = k;
+                                while (j < len && text[j] != '\n'
+                                       && (text[j] is '.' or '。' or '…' or '!' or '?' or '！' or '？'
+                                           || IsCloser(text[j])))
+                                    j++;
+                                break;
+                            }
                         }
 
                         j++;
@@ -147,6 +162,81 @@ public sealed class SentenceIndex
         }
 
         return idx;
+    }
+
+    // ------------------------------------------------------------- 高亮整句合并
+
+    /// <summary>
+    /// ==高亮== 整句口径（T-31）：任一句区间与任一高亮区间相交 → 并成一个区间，
+    /// 可传递合并（一句里多段高亮、高亮跨原句都收敛成一句）。
+    /// 高亮区本身以并集形式进入输出 —— "紧邻普通文字并入同一句"就是靠重叠自然带上
+    /// （到下一句末标点为止，因为句子边界是切句器给的）。
+    /// 输出按 Start 排序、去重叠（**相邻可保留**：相邻两句是两句，不并）。
+    /// zone 为空或 span 为空时原样返回（保持原顺序，不改输入）——
+    /// 未闭合 == 不产生高亮区，走的就是 zone 空这条路，整句口径不触发。
+    /// Core 纯函数：零依赖、不碰界面，渲染层（MdRender.SentenceIndexFor）与测试共用。
+    /// </summary>
+    public static List<(int Start, int End)> MergeSpansOverZones(
+        IReadOnlyList<(int Start, int End)> spans,
+        IReadOnlyList<(int Start, int End)> zones)
+    {
+        var sp = new List<(int Start, int End)>();
+        var zl = new List<(int Start, int End)>();
+
+        foreach (var s in spans) if (s.End > s.Start) sp.Add(s);
+        foreach (var z in zones) if (z.End > z.Start) zl.Add(z);
+
+        if (zl.Count == 0) return sp;   // 没高亮区：原样
+        if (sp.Count == 0) return zl;   // 没句子：高亮区自己就是输出
+
+        // 迭代到不动点：zone 与 span 相交 → 并成一个新区间放回 spans。
+        // 并完的区间可能够到别的 zone / span，所以归并重叠后重扫一轮，直到并不动为止。
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (int zi = 0; zi < zl.Count && !changed; zi++)
+                for (int si = 0; si < sp.Count && !changed; si++)
+                    if (sp[si].Start < zl[zi].End && zl[zi].Start < sp[si].End)
+                    {
+                        var u = (Start: Math.Min(sp[si].Start, zl[zi].Start),
+                                 End: Math.Max(sp[si].End, zl[zi].End));
+                        sp.RemoveAt(si);
+                        zl.RemoveAt(zi);
+                        sp.Add(u);
+                        UnionOverlaps(sp);
+                        changed = true;
+                    }
+        }
+
+        // 输出 = 合并后的句区间 ∪ 没碰到句子的高亮区，按 Start 排序、去重叠
+        var all = new List<(int Start, int End)>(sp);
+        all.AddRange(zl);
+        UnionOverlaps(all);
+        return all;
+    }
+
+    /// <summary>把严格重叠（相邻不算）的区间并成一块，并按 Start 排序。</summary>
+    private static void UnionOverlaps(List<(int Start, int End)> list)
+    {
+        if (list.Count < 2) return;
+
+        list.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
+
+        int w = 0;
+        for (int i = 1; i < list.Count; i++)
+        {
+            if (list[i].Start < list[w].End)   // 严格重叠才并；首尾相接（==）保留
+            {
+                if (list[i].End > list[w].End) list[w] = (list[w].Start, list[i].End);
+            }
+            else
+            {
+                list[++w] = list[i];
+            }
+        }
+
+        list.RemoveRange(w + 1, list.Count - w - 1);
     }
 
     // ------------------------------------------------------------- 查询

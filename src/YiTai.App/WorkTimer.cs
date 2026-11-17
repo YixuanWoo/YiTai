@@ -25,6 +25,8 @@
 //   显示：
 //     · 窗口标题后面追加「· 工作 h:mm:ss」。放标题不放栏底：三四个栏各有各的
 //       栏底信息条，塞哪栏都别扭；标题全局可见、不挤任何排版。
+//     · 窗口底部状态栏常显同一份「工作 h:mm:ss」（OnDisplay 回调，T-34；
+//       没开项目也显示「工作 0:00:00」，口径与标题一致）。标题后缀同时保留。
 //
 //   落盘（存不存、存哪、崩溃怎么办）：
 //     · 每 30 秒、换项目时、关窗时，把累计的秒数交给当前项目的
@@ -83,6 +85,13 @@ public sealed class WorkTimer
 
     /// <summary>标题的固定部分（"译台 — 项目名"）。计时后缀由这里拼上去。</summary>
     private string _baseTitle = "译台";
+
+    /// <summary>
+    /// 状态栏常显回调（T-34）：每次刷标题时同步把「工作 h:mm:ss」送出去，
+    /// MainWindow 接到窗口底部状态栏的 TxtWorkTime 上。null = 没接，什么都不发生。
+    /// 计时口径（活动才计时、闲置 180 秒停、失焦即停）与这套回调无关，一字不动。
+    /// </summary>
+    public Action<string>? OnDisplay;
 
     public WorkTimer(Window owner)
     {
@@ -198,6 +207,9 @@ public sealed class WorkTimer
             ? _baseTitle
             : $"{_baseTitle} · 工作 {Format(SessionElapsed)}";
         if (_owner.Title != title) _owner.Title = title;
+
+        // 状态栏常显同一份时长（T-34）：没开项目也显示，口径与标题一致（0:00:00）。
+        OnDisplay?.Invoke("工作 " + Format(SessionElapsed));
     }
 
     /// <summary>时长格式：h:mm:ss（小时不封顶，翻一天账也读得懂）。</summary>

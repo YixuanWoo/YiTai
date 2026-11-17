@@ -13,6 +13,10 @@
 //   15-16 滚动条样式、进度高亮图层的回归断言（读源码文本，不画窗口）
 //   17    区间运算 RangeMath（底带给 ==高亮== 让路）
 //   18    工作计时落盘 WorkTimeStore（缺文件/坏 JSON/往返/多日/原子写）+ 源码锚
+//   19    省略号单边界（.../……/。。。整段一个句末，T-30）
+//   20    ==高亮== 整句合并 MergeSpansOverZones（T-31）+ 渲染层接线源码锚
+//   21    快捷键重排 + 复制当前句（T-32 / T-33，源码锚）
+//   22    工作计时显示挪状态栏（T-34，源码锚）
 //
 // 退出码 0 = 全过，1 = 有失败。
 // ============================================================
@@ -957,6 +961,230 @@ try { Directory.Delete(wbox, recursive: true); } catch { }
 
 // 清理
 try { Directory.Delete(box, recursive: true); } catch { }
+
+// ============================================================
+// 19. 省略号单边界（T-30）
+// ============================================================
+// 为什么测这个：省略号以前只合并"连续半角点（≥2）"与"连续 …"两种，
+// 「。。。」按单个。逐个收句，一个。。。出 3 个句边界；混合写法（...…、……。、。。。！）
+// 也各多切一次。现在按"省略号停顿"判定：E = { '.' , '…' , '。' } 的极大连续 run
+// （不跨行），run 中 …≥1 或 .≥2 或 。≥2 → 整段 run 连同紧随的 T 类收尾只产生
+// **一个**句末边界；单个 '.' / '。' 行为不变。
+Console.WriteLine();
+Console.WriteLine("== 19. 省略号单边界（T-30）==");
+
+void OneBoundary(string text, string what)
+{
+    var si = SentenceIndex.FromPlain(text);
+    bool ok = si.Count == 1;
+    string detail = si.Count.ToString();
+    if (ok) ok = text.Substring(si.At(0).Start, si.At(0).Length) == text;   // 无空句、内容对上
+    Check(what, ok, detail);
+}
+
+OneBoundary("等一下...", "「...」只切一个句末边界");
+OneBoundary("等一下....", "「....」只切一个句末边界");
+OneBoundary("等一下…", "单个「…」只切一个句末边界");
+OneBoundary("等一下……", "「……」只切一个句末边界");
+OneBoundary("等一下。。。", "「。。。」整段只切一个句末边界（不再一。一句）");
+OneBoundary("等一下。。", "「。。」整段只切一个句末边界");
+OneBoundary("等一下...…", "「...…」混合写法只切一个句末边界");
+OneBoundary("……。", "「……。」混合写法只切一个句末边界");
+OneBoundary("等一下。。。！", "「。。！」run 连同紧随的！只切一个句末边界");
+OneBoundary("等一下……）", "「……）」收尾括号归上一句，只切一个句末边界");
+OneBoundary("他说：“……”？", "引号里的省略号 + 句末问号收尾只切一个句末边界");
+
+Check("「走吧。。。回家。」2 句（run 之后照常开新句）",
+      SentenceIndex.FromPlain("走吧。。。回家。").Count == 2,
+      SentenceIndex.FromPlain("走吧。。。回家。").Count.ToString());
+Check("省略号 run 不跨行：「等一下。\n。。。」仍是 2 句",
+      SentenceIndex.FromPlain("等一下。\n。。。").Count == 2,
+      SentenceIndex.FromPlain("等一下。\n。。。").Count.ToString());
+
+// 既有守卫回归：小数点 / 缩写 / 单个句号一个字都不能变
+Check("回归：Mr. Smith 仍 2 句", SentenceIndex.FromPlain("Mr. Smith went home. He slept.").Count == 2);
+Check("回归：3.5 小数点仍不切", SentenceIndex.FromPlain("It is 3.5 meters. Fine.").Count == 2);
+Check("回归：A. B（单个大写字母缩写）仍 1 句", SentenceIndex.FromPlain("A. B").Count == 1);
+Check("回归：普通句号一行三句不变", SentenceIndex.FromPlain("One. Two. Three.").Count == 3);
+
+// ============================================================
+// 20. ==高亮== 整句合并（T-31）
+// ============================================================
+// 为什么测这个：切句在渲染后文本上进行，== 标记被剥掉，高亮内容混在普通文字里按标点切；
+// 高亮里含句号/省略号时照样被切开。现在把合并算法下沉为 Core 纯函数
+// MergeSpansOverZones：任一句区间与任一高亮区间相交 → 并成一句，可传递合并；
+// 高亮区本身以并集进入输出（"紧邻文字并入"靠重叠自然带上）。
+// 边界口径逐条钉死（与方案文档第二节的边界表一一对应）。
+Console.WriteLine();
+Console.WriteLine("== 20. ==高亮== 整句合并（T-31）==");
+
+void MergeIs((int, int)[] spans, (int, int)[] zones, (int, int)[] want, string what)
+{
+    var got = SentenceIndex.MergeSpansOverZones(spans, zones);
+    bool ok = got.Count == want.Length;
+    string detail = $"[{string.Join(", ", got.Select(g => $"{g.Item1}..{g.Item2}"))}]";
+    for (int i = 0; ok && i < want.Length; i++) if (got[i] != want[i]) ok = false;
+    Check(what, ok, ok ? "" : detail);
+}
+
+// 边界表：高亮在句首 / 句中 / 句尾 → 与所在句合并为一句，紧邻普通文字自然并入
+MergeIs(new[] { (0, 10) }, new[] { (0, 3) }, new[] { (0, 10) }, "高亮在句首 → 仍是一句");
+MergeIs(new[] { (0, 10) }, new[] { (4, 7) }, new[] { (0, 10) }, "高亮在句中 → 仍是一句");
+MergeIs(new[] { (0, 10) }, new[] { (7, 10) }, new[] { (0, 10) }, "高亮在句尾 → 仍是一句");
+
+// 一句里多段高亮 → 都并入该句
+MergeIs(new[] { (0, 10) }, new[] { (2, 3), (5, 6) }, new[] { (0, 10) }, "一句里多段高亮 → 都并入该句");
+
+// 高亮跨两个"原句"（==A。B==）→ 两句并成一句（覆盖区间并集）
+MergeIs(new[] { (0, 10), (10, 20) }, new[] { (5, 15) }, new[] { (0, 20) }, "高亮跨两个原句 → 两句并成一句");
+
+// 可传递合并：zone → span → zone 收敛成一句
+MergeIs(new[] { (5, 10) }, new[] { (0, 6), (9, 15) }, new[] { (0, 15) }, "传递合并：高亮→句→高亮 收敛成一句");
+
+// 高亮含省略号/很长（同段内）仍是一句：用 FromPlain 造两个原句，整段高亮 → 一句
+string ellipText = "第一句……第二句。";
+var ellipSpans = SentenceIndex.FromPlain(ellipText);
+Check("前提：含省略号的文本切成 2 句", ellipSpans.Count == 2, ellipSpans.Count.ToString());
+var ellipZones = new (int, int)[ellipSpans.Count];
+for (int i = 0; i < ellipSpans.Count; i++) ellipZones[i] = (ellipSpans.At(i).Start, ellipSpans.At(i).End);
+MergeIs(ellipZones, new[] { (0, ellipText.Length) }, new[] { (0, ellipText.Length) },
+        "高亮含标点/省略号/很长（整段）→ 仍是一句");
+
+// 未闭合 ==：解析层就不产生高亮区 → 等价于 zones 为空 → 区间原样返回
+var openSpans = SentenceIndex.FromPlain("==没闭合。仍按标点切。");
+Check("前提：未闭合 == 的文本仍切成 2 句", openSpans.Count == 2, openSpans.Count.ToString());
+var untouched = SentenceIndex.MergeSpansOverZones(
+    new[] { (openSpans.At(0).Start, openSpans.At(0).End), (openSpans.At(1).Start, openSpans.At(1).End) },
+    Array.Empty<(int, int)>());
+Check("未闭合 ==（无高亮区）→ 不触发整句口径，区间原样返回",
+      untouched.Count == 2
+      && untouched[0] == (openSpans.At(0).Start, openSpans.At(0).End)
+      && untouched[1] == (openSpans.At(1).Start, openSpans.At(1).End));
+
+// 行内代码 / 表格不参与：Core 层没有这两样，用 FromPlain 组合说明——
+// 代码块整块是一句（块内句号不切），块里的"高亮区"并入整块后仍是一句、不外溢；
+// 表格在渲染层整块不进切句文本（BlockUIContainer），天然不参与，见源码锚。
+var codeSpans = SentenceIndex.FromPlain("```\na. b. c.\n```\nDone.");
+Check("前提：代码块整块一句 + Done 一句", codeSpans.Count == 2, codeSpans.Count.ToString());
+MergeIs(new[] { (codeSpans.At(0).Start, codeSpans.At(0).End), (codeSpans.At(1).Start, codeSpans.At(1).End) },
+        new[] { (4, 10) },
+        new[] { (codeSpans.At(0).Start, codeSpans.At(0).End), (codeSpans.At(1).Start, codeSpans.At(1).End) },
+        "代码块内的高亮区并入整块，仍是两句（表格在渲染层整块不参与）");
+
+// zone 与 span 不相交 → zone 原样输出、按 Start 排序
+MergeIs(new[] { (0, 5) }, new[] { (10, 15) }, new[] { (0, 5), (10, 15) }, "不相交的高亮区 → 原样输出并排序");
+
+// 相邻可保留（相邻两句是两句），重叠才并
+MergeIs(new[] { (0, 5), (5, 10) }, new[] { (20, 30) },
+        new[] { (0, 5), (5, 10), (20, 30) }, "相邻句区间保留相邻、重叠才并");
+
+// zone 空 / span 空 → 原样返回（不重排、不归并、不改输入）
+var messy = new[] { (3, 8), (0, 2) };
+var noZones = SentenceIndex.MergeSpansOverZones(messy, Array.Empty<(int, int)>());
+Check("zone 空 → spans 原样返回", noZones.Count == 2 && noZones[0] == (3, 8) && noZones[1] == (0, 2));
+var noSpans = SentenceIndex.MergeSpansOverZones(Array.Empty<(int, int)>(), messy);
+Check("span 空 → zones 原样返回", noSpans.Count == 2 && noSpans[0] == (3, 8) && noSpans[1] == (0, 2));
+
+// App 侧接线源码锚：SentenceIndexFor 必须真的调合并函数
+string? mdRenderPath = FindUp("src\\YiTai.App\\Markdown\\MdRender.cs");
+Check("MdRender.cs 找得到（源码锚）", mdRenderPath != null, mdRenderPath ?? "(没找到)");
+
+if (mdRenderPath != null)
+{
+    string mdRender = File.ReadAllText(mdRenderPath);
+
+    Check("源码锚：SentenceIndexFor 调用了 MergeSpansOverZones（高亮整句口径在渲染层接线）",
+          mdRender.Contains("SentenceIndex.MergeSpansOverZones", StringComparison.Ordinal),
+          "没接线的话高亮区白算了，整句口径不会生效");
+
+    Check("源码锚：拼接文本时递归识别 Tag=hl 的 Span 并记高亮区",
+          mdRender.Contains("\"hl\"", StringComparison.Ordinal)
+          && mdRender.Contains("hlZones", StringComparison.Ordinal));
+}
+
+// ============================================================
+// 21. 快捷键重排 + 复制当前句（T-32 / T-33，源码锚）
+// ============================================================
+// 为什么测这个：Ctrl+Alt 三键从"X 下一句 / C 居中"重排成"Z 下一句 / X 居中 / C 复制"。
+// 纯界面行为，CI 起不来窗口 —— 靠源码锚钉住键位接线，防止以后悄悄改回去。
+Console.WriteLine();
+Console.WriteLine("== 21. 快捷键重排 + 复制当前句（T-32 / T-33，源码锚）==");
+
+string? markerPath21 = FindUp("src\\YiTai.App\\MainWindow.Marker.cs");
+Check("MainWindow.Marker.cs 找得到（源码锚）", markerPath21 != null, markerPath21 ?? "(没找到)");
+
+if (markerPath21 != null)
+{
+    string marker21 = File.ReadAllText(markerPath21);
+
+    Check("源码锚：Ctrl+Alt+Z → StepMarker(+1)（下一句）",
+          marker21.Contains("Key.Z) { StepMarker(+1)", StringComparison.Ordinal));
+
+    Check("源码锚：Ctrl+Alt+X → CenterOnActivePane()（居中找回）",
+          marker21.Contains("Key.X) { CenterOnActivePane()", StringComparison.Ordinal));
+
+    Check("源码锚：Ctrl+Alt+C → CopyCurrentSentence()（复制当前句）",
+          marker21.Contains("Key.C) { CopyCurrentSentence()", StringComparison.Ordinal));
+
+    Check("源码锚：X 不再绑下一句（无双套并行）",
+          !marker21.Contains("Key.X) { StepMarker", StringComparison.Ordinal));
+
+    Check("源码锚：CopyCurrentSentence 用 TextRange 取纯文本并写剪贴板",
+          marker21.Contains("new TextRange(", StringComparison.Ordinal)
+          && marker21.Contains("Clipboard.SetText", StringComparison.Ordinal));
+}
+
+string? winXamlPath = FindUp("src\\YiTai.App\\MainWindow.xaml");
+Check("MainWindow.xaml 找得到（源码锚）", winXamlPath != null, winXamlPath ?? "(没找到)");
+
+string? winCsPath = FindUp("src\\YiTai.App\\MainWindow.xaml.cs");
+Check("MainWindow.xaml.cs 找得到（源码锚）", winCsPath != null, winCsPath ?? "(没找到)");
+
+if (winXamlPath != null && winCsPath != null)
+{
+    string winXaml = File.ReadAllText(winXamlPath);
+    string winCs = File.ReadAllText(winCsPath);
+
+    Check("源码锚：帮助菜单有「快捷键对照…」入口",
+          winXaml.Contains("OnShowShortcuts", StringComparison.Ordinal));
+
+    Check("源码锚：xaml.cs 实现了 OnShowShortcuts（快捷键对照对话框）",
+          winCs.Contains("private void OnShowShortcuts", StringComparison.Ordinal));
+}
+
+// ============================================================
+// 22. 工作计时显示挪状态栏（T-34，源码锚）
+// ============================================================
+// 为什么测这个：计时显示从"只在标题"扩到"状态栏常显"。计时口径（180 秒/30 秒落盘/
+// _needsActivity 门闩，第 18 节）一字不动，只加一个显示回调 —— 源码锚钉住三处接线。
+Console.WriteLine();
+Console.WriteLine("== 22. 工作计时显示挪状态栏（T-34，源码锚）==");
+
+string? timerPath22 = FindUp("src\\YiTai.App\\WorkTimer.cs");
+Check("WorkTimer.cs 找得到（源码锚）", timerPath22 != null, timerPath22 ?? "(没找到)");
+
+string? winXamlPath22 = FindUp("src\\YiTai.App\\MainWindow.xaml");
+Check("MainWindow.xaml 找得到（源码锚）", winXamlPath22 != null, winXamlPath22 ?? "(没找到)");
+
+string? winCsPath22 = FindUp("src\\YiTai.App\\MainWindow.xaml.cs");
+Check("MainWindow.xaml.cs 找得到（源码锚）", winCsPath22 != null, winCsPath22 ?? "(没找到)");
+
+if (timerPath22 != null && winXamlPath22 != null && winCsPath22 != null)
+{
+    string timer22 = File.ReadAllText(timerPath22);
+    string winXaml22 = File.ReadAllText(winXamlPath22);
+    string winCs22 = File.ReadAllText(winCsPath22);
+
+    Check("源码锚：WorkTimer 有 OnDisplay 显示回调",
+          timer22.Contains("OnDisplay", StringComparison.Ordinal));
+
+    Check("源码锚：状态栏有 TxtWorkTime 常显文本",
+          winXaml22.Contains("TxtWorkTime", StringComparison.Ordinal));
+
+    Check("源码锚：MainWindow 把 OnDisplay 接到状态栏",
+          winCs22.Contains("TxtWorkTime.Text = s", StringComparison.Ordinal)
+          || winCs22.Contains("TxtWorkTime.Text =", StringComparison.Ordinal));
+}
 
 // 从当前目录往上找仓库里的某个文件（测试从仓库根跑，也能从工程目录跑）
 string? FindUp(string rel)

@@ -53,6 +53,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _workTimer = new WorkTimer(this);   // 工作计时：键鼠活动才数秒，闲置/失焦即停（T-29）
+        _workTimer.OnDisplay = s => TxtWorkTime.Text = s;   // 状态栏常显「工作 h:mm:ss」（T-34）
 
         InitPanes();   // 先摆一排空栏；打开上次项目时再按项目记忆替换
 
@@ -856,12 +857,30 @@ public partial class MainWindow : Window
             "项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    private void OnShowShortcuts(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show(this,
+            "文件\n" +
+            "  Ctrl+N            新建项目\n" +
+            "  Ctrl+O            打开项目\n" +
+            "  Ctrl+S            保存\n" +
+            "  Ctrl+Shift+N      新建译文\n\n" +
+            "进度高亮（左手拇指按住 Ctrl+Alt，单手）\n" +
+            "  Ctrl+Alt+Z        下一句\n" +
+            "  Ctrl+Alt+X        居中找回当前句\n" +
+            "  Ctrl+Alt+C        复制当前高亮句\n" +
+            "  Ctrl+Alt+1..4     切到第 N 栏\n" +
+            "  Ctrl+Shift+↑ / ↓  上一句 / 下一句",
+            "快捷键对照", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private void OnAbout(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(this,
             "译台 / YiTai\n\n左资料、右译文的最小翻译工作台。\n" +
             "MIT 许可，源码可读可改。\n\n" +
-            "快捷键：Ctrl+S 保存 · Ctrl+N 新建项目 · Ctrl+O 打开项目",
+            "快捷键：Ctrl+S 保存 · Ctrl+N 新建项目 · Ctrl+O 打开项目 · " +
+            "Ctrl+Alt+Z 下一句 · Ctrl+Alt+X 居中找回 · Ctrl+Alt+C 复制当前句",
             "关于译台", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 }

@@ -52,6 +52,7 @@
             </MenuItem>
             <MenuItem Header="帮助(_H)">
                 <MenuItem Header="项目文件夹里有什么？" Click="OnExplainLayout"/>
+                <MenuItem Header="快捷键对照…" Click="OnShowShortcuts"/>
                 <MenuItem Header="关于译台" Click="OnAbout"/>
             </MenuItem>
         </Menu>
@@ -210,6 +211,10 @@
                     <TextBlock x:Name="TxtMissingCount" FontSize="11.5" Margin="0,0,14,0"
                                Foreground="{DynamicResource Warn}" Visibility="Collapsed"
                                Cursor="Hand" MouseLeftButtonUp="OnShowMissingList"/>
+                    <TextBlock x:Name="TxtWorkTime" FontSize="11.5" Margin="0,0,14,0"
+                               Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"
+                               Text="工作 0:00:00"
+                               ToolTip="本次工作时长：活动才计时，闲置 180 秒/失焦即停，回前台动一下才续算"/>
                     <TextBlock x:Name="TxtSaveState" FontSize="11.5"
                                Foreground="{DynamicResource TextFaint}"/>
                 </StackPanel>

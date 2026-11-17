@@ -12,6 +12,7 @@
 // 交互（一条比一条省事）：
 //   · 在资料栏里点一下（不拖选、不是双击的第二下）→ 竖线落到那句话前面
 //   · Ctrl+Shift+↑ / ↓  → 上一句 / 下一句（按标点切句，不按段落跳）
+//   · Ctrl+Alt+Z → 下一句；Ctrl+Alt+X → 居中找回；Ctrl+Alt+C → 复制当前高亮句
 //   · 右键 → 「把进度标记放在这里」/「清除进度标记」（兜底）
 //
 // 为什么不自动跟着译文光标走：译文和资料之间没有对齐数据，按段落序号硬推，
@@ -99,11 +100,13 @@ public partial class MainWindow
     {
         var mods = Keyboard.Modifiers;
 
-        // 进度高亮的两个单手键：左手拇指按住 Ctrl+Alt，食指按 X 推一句 / 按 C 找回。
+        // 进度高亮的三个单手键（T-32 重排）：左手拇指按住 Ctrl+Alt，
+        // Z 推一句 / X 居中找回 / C 复制当前句。C=Copy、X=找回、Z=推进，语义各归各。
         if (mods == (ModifierKeys.Control | ModifierKeys.Alt))
         {
-            if (e.Key == Key.X) { StepMarker(+1); e.Handled = true; return; }
-            if (e.Key == Key.C) { CenterOnActivePane(); e.Handled = true; return; }
+            if (e.Key == Key.Z) { StepMarker(+1); e.Handled = true; return; }
+            if (e.Key == Key.X) { CenterOnActivePane(); e.Handled = true; return; }
+            if (e.Key == Key.C) { CopyCurrentSentence(); e.Handled = true; return; }
 
             if (e.Key is Key.D1 or Key.D2 or Key.D3 or Key.D4)
             {
@@ -824,7 +827,7 @@ public partial class MainWindow
     // ---------------------------------------------------------------- 居中找回
 
     /// <summary>
-    /// Ctrl+Alt+C：把当前句滚到栏的垂直中间，再让底带闪两下。
+    /// Ctrl+Alt+X：把当前句滚到栏的垂直中间，再让底带闪两下。
     /// 只动视口、不改进度 —— 这是一次"我看看自己译到哪了"，不是"我译完了"。
     /// </summary>
     private void CenterOnActivePane()
@@ -898,5 +901,45 @@ public partial class MainWindow
         };
 
         pane.BandLayer.BeginAnimation(System.Windows.UIElement.OpacityProperty, anim);
+    }
+
+    // ---------------------------------------------------------------- 复制当前句
+
+    /// <summary>
+    /// Ctrl+Alt+C：把当前高亮句复制到剪贴板（T-33）。
+    /// 取活动栏 → 当前进度偏移 → 句区间 → 用渲染文档上的 TextPointer 构造 TextRange
+    /// 取纯文本 —— 渲染文档里天然没有 ==/Markdown 标记/行号，复制出去就是干净的一句。
+    /// </summary>
+    private void CopyCurrentSentence()
+    {
+        var pane = ResolveActivePane();
+        if (pane?.Body?.Document == null) return;
+
+        int offset = CurrentOffset(pane);
+        if (offset < 0)
+        {
+            Status("这一栏还没标进度，先点一下正文");
+            return;
+        }
+
+        if (pane.Sentences is not { Count: > 0 })
+        {
+            Status("这一栏还没切出句子（可能是空文件或表格）");
+            return;
+        }
+
+        var span = pane.Sentences.At(pane.Sentences.IndexAt(offset));
+
+        var start = MdRender.PointerAtOffset(pane.Body.Document, span.Start);
+        var end = MdRender.PointerAtOffset(pane.Body.Document, span.End);
+        if (start == null || end == null) return;
+
+        string text = new TextRange(start, end).Text.Trim();
+        if (text.Length == 0) return;
+
+        try { Clipboard.SetText(text); }
+        catch (Exception) { return; }   // 剪贴板被别的程序占着：不崩，只是没复制成
+
+        Status($"已复制当前句（{text.Length} 字）");
     }
 }

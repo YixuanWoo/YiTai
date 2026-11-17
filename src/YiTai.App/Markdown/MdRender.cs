@@ -359,17 +359,35 @@ public static class MdRender
     {
         var sb = new System.Text.StringBuilder();
         var map = new List<(int ConStart, int TagStart, int Len)>();
+        var hlZones = new List<(int Start, int End)>();   // ==高亮== 内容的拼接坐标（T-31）
 
         void AppendParagraph(Paragraph p)
         {
-            foreach (Run run in RunsIn(p.Inlines))
+            // RunsIn 不带祖先信息，所以自己走一遍：遇到 Tag 为 "hl" 的 Span 时，
+            // 把内部 Run 的拼接坐标记进高亮区，切句之后按它整句合并（T-31）。
+            void Walk(InlineCollection inlines, bool inHl)
             {
-                if (run.Tag is not int tag) continue;
-                if (run.Text.Length == 0) continue;
+                foreach (Inline inl in inlines)
+                {
+                    if (inl is Run run)
+                    {
+                        if (run.Tag is not int tag) continue;
+                        if (run.Text.Length == 0) continue;
 
-                map.Add((sb.Length, tag, run.Text.Length));
-                sb.Append(run.Text);
+                        int conStart = sb.Length;
+                        map.Add((conStart, tag, run.Text.Length));
+                        sb.Append(run.Text);
+
+                        if (inHl) hlZones.Add((conStart, sb.Length));
+                    }
+                    else if (inl is Span span)
+                    {
+                        Walk(span.Inlines, inHl || (span.Tag as string) == "hl");
+                    }
+                }
             }
+
+            Walk(p.Inlines, inHl: false);
 
             sb.Append("\n\n");   // 段与段之间是硬边界
         }
@@ -393,12 +411,20 @@ public static class MdRender
         }
 
         var raw = SentenceIndex.FromPlain(sb.ToString());
+
+        var plain = new List<(int Start, int End)>(raw.Count);
+        for (int i = 0; i < raw.Count; i++)
+            plain.Add((raw.At(i).Start, raw.At(i).End));
+
+        // ==高亮== 整句口径（T-31）：与高亮区相交的句子合并成一句，再换算回文档偏移
+        var merged = SentenceIndex.MergeSpansOverZones(plain, hlZones);
+
         var spans = new List<(int Start, int End)>();
 
-        for (int i = 0; i < raw.Count; i++)
+        foreach (var (a0, b0) in merged)
         {
-            int a = ConToTag(map, raw.At(i).Start, isEnd: false);
-            int b = ConToTag(map, raw.At(i).End, isEnd: true);
+            int a = ConToTag(map, a0, isEnd: false);
+            int b = ConToTag(map, b0, isEnd: true);
             if (b > a) spans.Add((a, b));
         }
 
