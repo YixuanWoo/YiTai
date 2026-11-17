@@ -215,6 +215,9 @@
 - 门禁结果（工程岗终审实测）：`.\build.ps1` 退出码 0、Debug 编译 `0 个警告 / 0 个错误`
   （另以 `-warnaserror` 复核 Debug 与 Release 均 0/0）、冒烟 **202 → 254 项全过**；
   真机五项验证见任务报告（省略号一次跨过 / 高亮整句复制 / 旧 X 不跳句 / 复制反馈 / 状态栏计时 0:00:18→0:00:22）。
+- CI：推送 `d804a79` 触发 `build-and-test` run **44015319618**，**conclusion=success**（1m5s），
+  `-warnaserror` 编译 0/0、冒烟 254 项全过（门禁未放宽）；
+  https://github.com/YixuanWoo/YiTai/actions/runs/44015319618 。
 - 数据安全：验证前后真实 `%APPDATA%\YiTai\settings.json` 与 `samples\demo` 的 sha256/mtime
   与开工基线逐字节一致；真机走 `%TEMP%` 沙箱 + `YITAI_CONFIG_DIR`，沙箱账本落盘 42 秒（口径未改的旁证）。
 - 文档同步：README「用起来」快捷键行、「已知边界」新增省略号与高亮整句两条、
