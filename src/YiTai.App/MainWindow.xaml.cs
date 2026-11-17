@@ -157,7 +157,7 @@ public partial class MainWindow : Window
         _store.SyncTranslations();
         _store.Save();
 
-        _workTimer.BaseTitle = $"译台 — {_store.Meta.Name}";   // 计时后缀由 WorkTimer 拼（T-29）
+        _workTimer.BaseTitle = $"译台 — {_store.Meta.Name}";   // 标题只写项目名，计时只在状态栏（T-36）
         _workTimer.SetProject(_store.Root);
         TxtProject.Text = _store.Meta.Name;
         TxtProjectPath.Text = _store.Root;

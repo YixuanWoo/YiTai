@@ -23,10 +23,11 @@
 //       "本次" = 软件本次启动以来所有"正在工作"的秒数总和。
 //
 //   显示：
-//     · 窗口标题后面追加「· 工作 h:mm:ss」。放标题不放栏底：三四个栏各有各的
-//       栏底信息条，塞哪栏都别扭；标题全局可见、不挤任何排版。
-//     · 窗口底部状态栏常显同一份「工作 h:mm:ss」（OnDisplay 回调，T-34；
-//       没开项目也显示「工作 0:00:00」，口径与标题一致）。标题后缀同时保留。
+//     · **只在窗口底部状态栏常显一处**「工作 h:mm:ss」（OnDisplay 回调，T-34）。
+//       没开项目也显示「工作 0:00:00」，口径全局一致。
+//     · 窗口标题只写「译台 — 项目名」，**不带时长**（T-36）：状态栏有了计时之后，
+//       标题再拼一个后缀就是同一个界面上两个计时器，读数还互相对不上（一个在跳、
+//       一个冻结），用户已经提过这件事。标题归标题，计时归状态栏一处。
 //
 //   落盘（存不存、存哪、崩溃怎么办）：
 //     · 每 30 秒、换项目时、关窗时，把累计的秒数交给当前项目的
@@ -83,12 +84,13 @@ public sealed class WorkTimer
     /// <summary>当前计时要记到的项目根。null = 没开项目，不计时。</summary>
     private string? _projectRoot;
 
-    /// <summary>标题的固定部分（"译台 — 项目名"）。计时后缀由这里拼上去。</summary>
+    /// <summary>窗口标题的固定部分（「译台 — 项目名」/「译台」）。标题不带时长（T-36）。</summary>
     private string _baseTitle = "译台";
 
     /// <summary>
-    /// 状态栏常显回调（T-34）：每次刷标题时同步把「工作 h:mm:ss」送出去，
+    /// 状态栏常显回调（T-34）：每次刷新时把「工作 h:mm:ss」送出去，
     /// MainWindow 接到窗口底部状态栏的 TxtWorkTime 上。null = 没接，什么都不发生。
+    /// 整窗**只有这一处**显示计时（T-36：标题栏那份已删）；
     /// 计时口径（活动才计时、闲置 180 秒停、失焦即停）与这套回调无关，一字不动。
     /// </summary>
     public Action<string>? OnDisplay;
@@ -202,13 +204,11 @@ public sealed class WorkTimer
 
     private void RefreshTitle()
     {
-        // 没开项目就不带后缀；开着的暂停了就显示冻结的时长（看得见"停了"）。
-        string title = _projectRoot == null
-            ? _baseTitle
-            : $"{_baseTitle} · 工作 {Format(SessionElapsed)}";
-        if (_owner.Title != title) _owner.Title = title;
+        // T-36：标题只写「译台 — 项目名」，不再拼时长 —— 计时只在状态栏一处（下面 OnDisplay）。
+        if (_owner.Title != _baseTitle) _owner.Title = _baseTitle;
 
-        // 状态栏常显同一份时长（T-34）：没开项目也显示，口径与标题一致（0:00:00）。
+        // 状态栏常显时长（T-34）：没开项目也显示，口径与账本一致（0:00:00）；
+        // 暂停时显示冻结值（看得见"停了"）。
         OnDisplay?.Invoke("工作 " + Format(SessionElapsed));
     }
 

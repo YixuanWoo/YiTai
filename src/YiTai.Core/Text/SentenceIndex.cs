@@ -10,8 +10,8 @@ namespace YiTai.Core;
 /// （[Start, End) 左闭右开），跟 progress.json 里存的是同一套坐标。
 ///
 /// 规则（宁可少切，也不能把 Mr. Smith 切成两句）：
-///  · 句末：. ! ? 。！？…（省略号停顿：./…/。 的连续 run，…≥1 或 .≥2 或 。≥2 算一个，
-///    并吞掉紧随的收尾；见 T-30）
+///  · 句末：. ! ? 。！？…（省略号停顿：./…/。 的连续 run，…≥1 或 .≥2 或 。≥2 算一个；
+///    点间只隔空格的写法 `. . .` 也算一串，累计 ≥3 个点同样只给一个句末边界；见 T-30 / T-35）
 ///  · 句末后的收尾引号/括号 ”’"'）)】」 归给上一句
 ///  · 缩写守卫：Mr. Dr. etc. e.g. U.S. 以及单个大写字母（J.）后面的点不切
 ///  · 小数点不切：3.5 / 10,000.00
@@ -117,6 +117,11 @@ public sealed class SentenceIndex
                         // 句末边界，并连同紧随的 T 类收尾（T = E ∪ ？！，含收尾引号/括号）一起吞掉
                         // ——「……！」「。。。？」「他说："……"？」都只算一句。
                         // 不满足触发条件的单个 '.' / '。' 落到下面的原逻辑，行为不变。
+                        // T-35：英文资料里还有**点间带空格**的写法（`. . .`，三个句号各夹一个空格）。
+                        // 它在空格处就断了 run，T-30 的连续 run 判定看不见它 —— 每个 '.' 各自收句，
+                        // 一句被切成 4 句。这里把"只隔空格/制表符的 E 段链"也算进来：
+                        // 累计 ≥3 个点且段间确有空白 → 同连续 run 一样，整链只给一个句末边界。
+                        // 段间夹了数字/字母（`Item 1. Item 2.`、`A. B`）就不算一串，行为照旧。
                         if (c is '.' or '。' or '…')
                         {
                             int k = j;
@@ -130,11 +135,49 @@ public sealed class SentenceIndex
                                 else marks++;
                             }
 
-                            if (marks >= 1 || halfDots >= 2 || cnDots >= 2)
+                            bool pause = marks >= 1 || halfDots >= 2 || cnDots >= 2;
+
+                            if (!pause)
+                            {
+                                int t = k;
+                                bool spaced = false;
+
+                                while (true)
+                                {
+                                    int w = t;
+                                    while (w < len && (text[w] == ' ' || text[w] == '\t')) w++;
+                                    if (w == t) break;                     // 后面没空白：连写段已经吃完
+                                    if (w >= len || text[w] == '\n' || !(text[w] is '.' or '。' or '…'))
+                                        break;                             // 空白后面不是点：这段链到此为止
+                                    spaced = true;
+
+                                    int e = w;
+                                    while (e < len && text[e] != '\n' && (text[e] is '.' or '。' or '…'))
+                                    {
+                                        if (text[e] == '.') halfDots++;
+                                        else if (text[e] == '。') cnDots++;
+                                        else marks++;
+                                        e++;
+                                    }
+
+                                    t = e;
+                                }
+
+                                if (spaced && halfDots + cnDots + marks >= 3)
+                                {
+                                    pause = true;
+                                    k = t;                                 // 链尾：最后一串点的末尾
+                                }
+                            }
+
+                            if (pause)
                             {
                                 j = k;
+                                // 收尾：紧随的 T 类与引号括号都归这句；中间的空白一并吞掉
+                                // （句区间落盘前会去掉尾部空白，多吞不影响坐标）。
                                 while (j < len && text[j] != '\n'
                                        && (text[j] is '.' or '。' or '…' or '!' or '?' or '！' or '？'
+                                           || text[j] == ' ' || text[j] == '\t'
                                            || IsCloser(text[j])))
                                     j++;
                                 break;

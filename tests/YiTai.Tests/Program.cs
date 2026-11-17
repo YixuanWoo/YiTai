@@ -17,6 +17,7 @@
 //   20    ==高亮== 整句合并 MergeSpansOverZones（T-31）+ 渲染层接线源码锚
 //   21    快捷键重排 + 复制当前句（T-32 / T-33，源码锚）
 //   22    工作计时显示挪状态栏（T-34，源码锚）
+//   23    英文省略号边界：点间带空格 . . . / 三点收尾引号括号 / 大写新句（T-35）
 //
 // 退出码 0 = 全过，1 = 有失败。
 // ============================================================
@@ -949,8 +950,18 @@ if (timerPath != null)
           && !timer.Contains("PreviewMouseMove"),
           "纯鼠标移动不算活动，别顺手挂上去");
 
-    Check("源码锚：标题时长格式是 h:mm:ss",
+    // T-36：计时只在状态栏一处显示，窗口标题恢复成「译台 — 项目名」。
+    // 原来这条锚钉的是"标题带 h:mm:ss"，现在改钉状态栏口径 —— 别再把时长拼回标题。
+    Check("源码锚：状态栏时长格式仍是 h:mm:ss（口径不变）",
           timer.Contains("{t.Minutes:D2}:{t.Seconds:D2}"), "");
+
+    Check("源码锚：窗口标题不再拼时长（没有「· 工作」后缀）",
+          !timer.Contains("· 工作"),
+          "标题栏只留「译台 — 项目名」，整窗只有一个计时（状态栏）");
+
+    Check("源码锚：状态栏口径是「工作 h:mm:ss」（OnDisplay 送 Format）",
+          timer.Contains("OnDisplay?.Invoke(\"工作 \" + Format(SessionElapsed))"),
+          "状态栏那一处的文案口径一字不动");
 
     Check("源码锚：回到前台先等一次新活动才算（_needsActivity 门闩）",
           timer.Contains("!_needsActivity") && timer.Contains("_needsActivity = false"),
@@ -1200,8 +1211,91 @@ string? FindUp(string rel)
     return null;
 }
 
+// ============================================================
+// 23. 英文省略号边界（T-35）
+// ============================================================
+// 为什么测这个：T-30 只把"**连续** E 字符 run"（...、……、。。。）并成一个句末边界，
+// 它的 17 条断言全是连续写法；英文资料里常见的点间带空格写法 `. . .`
+// （三个句号中间各夹一个空格）run 在空格处就断了，于是每个 `.` 各自收句 ——
+// 一段 `He paused . . . then he left.` 被切成 4 句，进度线要按三次才跨过去。
+// 现在把"点间带空格"的省略号也算一个停顿：E 段之间只隔空格/制表符、
+// 累计 ≥3 个点 → 整段只产生一个句末边界（收尾引号/括号照旧并入上一句）。
+// 连续写法的口径与既有守卫（Mr./e.g./3.14/A. B/普通句号）一个字都不动。
+Console.WriteLine();
+Console.WriteLine("== 23. 英文省略号边界（T-35）==");
+
+string SpanText(string text, int i)
+{
+    var si = SentenceIndex.FromPlain(text);
+    var sp = si.At(i);
+    return text.Substring(sp.Start, sp.Length);
+}
+
+void TwoSentences(string text, string wantFirst, string what)
+{
+    var si = SentenceIndex.FromPlain(text);
+    bool ok = si.Count == 2;
+    string detail = si.Count.ToString();
+    if (ok) ok = SpanText(text, 0) == wantFirst;
+    Check(what, ok, ok ? "" : $"句数={detail}，第一句=「{(si.Count > 0 ? SpanText(text, 0) : "")}」");
+}
+
+// 23.1 连续三点：英文句中 / 句尾（T-30 已覆盖的写法，这里把英文上下文补齐）
+Check("英文：He paused... then he left. → 2 句（... 只算一个句末边界）",
+      SentenceIndex.FromPlain("He paused... then he left.").Count == 2,
+      SentenceIndex.FromPlain("He paused... then he left.").Count.ToString());
+Check("英文：He said goodbye... Then the door closed. → 2 句（句尾三点 + 大写新句）",
+      SentenceIndex.FromPlain("He said goodbye... Then the door closed.").Count == 2,
+      SentenceIndex.FromPlain("He said goodbye... Then the door closed.").Count.ToString());
+Check("英文：三点跨段不并（...\\n\\nThen 仍是 2 句）",
+      SentenceIndex.FromPlain("He paused...\n\nThen he left.").Count == 2,
+      SentenceIndex.FromPlain("He paused...\n\nThen he left.").Count.ToString());
+
+// 23.2 点间带空格：这就是用户中招的写法（三个句号各夹一个空格）
+TwoSentences("He paused . . . then he left.", "He paused . . .",
+             "英文：He paused . . . then he left. → 2 句（点间空格也是一个边界）");
+TwoSentences("He paused . . . Then he left.", "He paused . . .",
+             "英文：点间空格的三点后接大写新句 → 2 句");
+TwoSentences("等一下 。 。 。 继续。", "等一下 。 。 。",
+             "中文：。 。 。（点间空格）同样只算一个句末边界");
+Check("英文：空格点三点不改数目枚举（Item 1. Item 2. Item 3. 仍 3 句）",
+      SentenceIndex.FromPlain("Item 1. Item 2. Item 3.").Count == 3,
+      SentenceIndex.FromPlain("Item 1. Item 2. Item 3.").Count.ToString());
+
+// 23.3 三点紧跟引号 / 括号（连续与点间空格两种写法都要收进上一句）
+TwoSentences("She said \"...\" and left.", "She said \"...\"",
+             "英文：三点紧跟收尾引号 → 引号归上一句（2 句）");
+TwoSentences("He paused (or so I thought...) and left.", "He paused (or so I thought...)",
+             "英文：三点紧跟收尾括号 → 括号归上一句（2 句）");
+TwoSentences("He paused . . . \" she said.", "He paused . . . \"",
+             "英文：点间空格的三点后紧跟引号 → 引号归上一句（2 句）");
+TwoSentences("He paused (maybe . . .) and left.", "He paused (maybe . . .)",
+             "英文：点间空格的三点后紧跟括号 → 括号归上一句（2 句）");
+
+// 23.4 既有守卫回归：缩写 / 小数点 / 单大写字母 / 普通句号，一个都不能被新规则带坏
+Check("回归：Mr. Smith waited... then → 2 句（Mr. 守卫与省略号不打架）",
+      SentenceIndex.FromPlain("Mr. Smith waited... then he left.").Count == 2,
+      SentenceIndex.FromPlain("Mr. Smith waited... then he left.").Count.ToString());
+Check("回归：e.g. / i.e. 后接省略号不误切",
+      SentenceIndex.FromPlain("He cited e.g. two works... then stopped.").Count == 2,
+      SentenceIndex.FromPlain("He cited e.g. two works... then stopped.").Count.ToString());
+Check("回归：3.14 小数点不被点间空格规则吃掉",
+      SentenceIndex.FromPlain("It cost 3.14 dollars. Fine.").Count == 2,
+      SentenceIndex.FromPlain("It cost 3.14 dollars. Fine.").Count.ToString());
+Check("回归：Mr. / e.g. / 3.14 全在一句里仍按句号切 3 句",
+      SentenceIndex.FromPlain("Well, Mr. Smith waited... e.g. nothing happened. It cost 3.14 dollars.").Count == 3,
+      SentenceIndex.FromPlain("Well, Mr. Smith waited... e.g. nothing happened. It cost 3.14 dollars.").Count.ToString());
+Check("回归：A. B 单大写字母缩写仍不切（1 句）",
+      SentenceIndex.FromPlain("A. B").Count == 1,
+      SentenceIndex.FromPlain("A. B").Count.ToString());
+Check("回归：普通句号 One. Two. Three. 仍 3 句（点间空格规则不误并）",
+      SentenceIndex.FromPlain("One. Two. Three.").Count == 3,
+      SentenceIndex.FromPlain("One. Two. Three.").Count.ToString());
+
 Console.WriteLine();
 if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");
 else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
 
 return failed == 0 ? 0 : 1;
+
+
