@@ -163,9 +163,17 @@
 
 ## 第三批：发布与体验
 
-- [ ] **T-13 CI 落地**
-  `.github/workflows/ci.yml` 已写好（restore → build → 冒烟测试，退出码非 0 即失败），卡在推送权限：
-  token 缺 `workflow` scope。两条路：网页 Add file 粘贴，或 `gh auth refresh -s workflow`。
+- [ ] **T-13 CI 落地（2026-11-17：yml 已在本地入库，推送仍卡 token 缺 `workflow` scope，待拍板）**
+  `.github/workflows/ci.yml` 已在本地 master 入库（commit `b663114`，提交信息带 [T-13]），
+  门禁只加严不加宽：编译加 `-warnaserror`（警告一律按错误处理，钉死 0 警告 0 错误）；
+  冒烟测试断言收尾行为「全部通过 ✓（N 项）」且 **N ≥ 202**（当前基线，只增不减，防删测试凑绿）；
+  非 0 退出即失败；无跳过测试、无 continue-on-error、无屏蔽警告。
+  本地留证（2026-11-17）：Debug 构建 0 个警告 0 个错误、退出码 0；冒烟 202 项全过；
+  CI 冒烟步骤脚本在本地逐字模拟通过（正则命中「全部通过 ✓（202 项）」）。
+  推送实测仍被远端拒绝：`refusing to allow an OAuth App to create or update workflow
+  … without workflow scope`（推送 token 只有 repo / gist / read:org，没有 workflow）。
+  两条授权路：网页 Add file 粘贴，或 `gh auth refresh -h github.com -s workflow`
+  （浏览器输一次性代码，约半分钟）；授权后 `git push origin master` 一次推送即触发首个 CI run。
   *验收*：一次 push 后 Actions 绿勾。
 
 - [x] **T-14 `release.ps1`（已完成，2026-11-16；远端挂 Release 仍未做，见条目末尾的边界）**
@@ -472,4 +480,4 @@
 |---|---|---|
 | T-9 / T-11 | 改 `project.json` 与 `.yitai` 结构，旧项目可能读不回 | 先整目录备份，再改；保留旧文件读取路径 |
 | T-12 | 删掉的文字抽取若以后要用，得从头做 | 已选方案 A；旧代码在 T-12 之前的 `git log` 里（220 行），捡回来不算从零 |
-| T-13 | 需要 token `workflow` 权限 | 网页粘贴或刷新授权 |
+| T-13 | 需要 token `workflow` 权限 | 网页粘贴，或 `gh auth refresh -h github.com -s workflow`；授权后一次 `git push` 即触发 CI |

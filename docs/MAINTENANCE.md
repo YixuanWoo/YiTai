@@ -9,7 +9,7 @@
 |---|---|
 | 平台 | Windows / WPF / .NET SDK 10（`net10.0-windows`） |
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
-| 分支 | `master`（另有 `ci-pending` 分支，见 T-13） |
+| 分支 | `master`（ci.yml 已在本地 master 入库、待授权后推送，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
 | 冒烟测试 | **202 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
@@ -80,7 +80,7 @@
 
 | 事项 | 现状 / 处理 |
 |---|---|
-| CI 不绿（T-13） | `.github/workflows/ci.yml` 已写好，卡在 push token 缺 `workflow` scope；网页粘贴或 `gh auth refresh -s workflow` |
+| CI 不绿（T-13） | `ci.yml` 已在本地 master 入库（`b663114`，门禁加严版），推送卡在 token 缺 `workflow` scope；授权（`gh auth refresh -h github.com -s workflow` 或网页粘贴）后一次 `git push` 即触发 |
 | 根目录 exe 与 dist 不同步 | `build.ps1 -Release` 已自动复制；程序运行中复制失败只警告，别当发布失败 |
 | 测试 15/16 找不到源码 | 这两节从**当前目录往上**找 `Theme.xaml`。`build.ps1` 已 `Set-Location` 到仓库根；直接 `dotnet run` 时要在仓库根跑 |
 | 行号只标逻辑行 | 设计取舍，见 README；不是 bug |
@@ -154,9 +154,30 @@
   验证后逐字节恢复（sha256 与 mtime 均与备份一致，`.yitai` 新增目录已删除）。
 - 未提交：按红线不做 git 提交/推送，改动留给工程岗审查后统一提交。
 
+## 8.2 交接验收记录（2026-11-17，T-13 CI 推进）
+
+- 推送状态核查：本地 HEAD = `c6c6604`，远端实际 sha（`git ls-remote`）= `c6c6604`，
+  ahead/behind 0/0，已跟踪文件无改动 —— **昨晚已推送、无需再推**（未造空提交）。
+- CI：`.github/workflows/ci.yml` 以 commit `b663114`（信息带 [T-13]）在本地 master 入库。
+  门禁只加严不加宽：`dotnet build -warnaserror`（警告按错误处理）＋
+  冒烟测试断言收尾行「全部通过 ✓（N 项）」且 N ≥ 202；无跳过测试、无 continue-on-error、
+  无屏蔽警告。
+- 本地留证：Debug 构建 `0 个警告 / 0 个错误`、退出码 0；冒烟 202 项全过；
+  CI 冒烟步骤脚本在本地逐字模拟跑通（正则命中 202 项、退出码 0）。
+- 推送实测被拒（本单唯一卡点）：`! [remote rejected] … refusing to allow an OAuth App to
+  create or update workflow '.github/workflows/ci.yml' without 'workflow' scope`。
+  推送 token scopes 仅 repo / gist / read:org。不绕安全边界，等授权。
+- **授权后会发生什么（写明以后代码推送自动跑的检查）**：push / PR 到 master 自动触发
+  `build-and-test` workflow —— ① `dotnet restore YiTai.slnx`；② `dotnet build -warnaserror`
+  （0 警告 0 错误，有警告即红）；③ 冒烟测试（非 0 退出即红，且项数 < 202 即红）。
+  红绿以 Actions 页面为准，不再依赖"本地跑没跑门禁"的口头声明。
+- 文档同步：TODO 的 T-13 条目与"前置动作表"已按本记录更新。
+
 ## 9. 需要人拍板的事
 
-1. **T-13 CI**：要不要现在刷新 token 的 `workflow` 权限（否则 CI 只能停在 `ci-pending` 分支）。
+1. **T-13 CI**：刷新 token 的 `workflow` 权限（`gh auth refresh -h github.com -s workflow`，
+   浏览器输一次性代码，约半分钟）或网页 Add file 粘贴 yml；授权后一次 `git push origin master`
+   即触发首个 CI run（yml 已在本地入库，commit `b663114`）。
 2. **T-14 / T-15**：release.ps1 与代码签名做不做（签名要自备证书）。
 3. **T-17**：大文件性能现在做还是等真实卡顿反馈。
 4. **项目归属**：YiTai 目前不在 AICompany 的项目配置里。若要纳入公司项目管理，
