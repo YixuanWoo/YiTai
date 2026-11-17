@@ -1279,6 +1279,13 @@ Check("回归：Mr. Smith waited... then → 2 句（Mr. 守卫与省略号不�
 Check("回归：e.g. / i.e. 后接省略号不误切",
       SentenceIndex.FromPlain("He cited e.g. two works... then stopped.").Count == 2,
       SentenceIndex.FromPlain("He cited e.g. two works... then stopped.").Count.ToString());
+
+// 缩写表里的词后面**紧跟**省略号（etc... / U.S...）：缩写守卫不能把整段点吞掉，
+// 否则句末边界直接丢失（整句连下一句并成一句，按「下一句」会跨过头）。
+TwoSentences("He brought pens, etc... Then he left.", "He brought pens, etc...",
+             "回归：etc... 后面的省略号照样收句（守 2 句，不是并成 1 句）");
+TwoSentences("In the U.S... Then he left.", "In the U.S...",
+             "回归：U.S... 后面的省略号照样收句（缩写点与省略号互不吃掉）");
 Check("回归：3.14 小数点不被点间空格规则吃掉",
       SentenceIndex.FromPlain("It cost 3.14 dollars. Fine.").Count == 2,
       SentenceIndex.FromPlain("It cost 3.14 dollars. Fine.").Count.ToString());

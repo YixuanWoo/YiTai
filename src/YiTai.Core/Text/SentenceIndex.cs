@@ -359,6 +359,10 @@ public sealed class SentenceIndex
     /// <summary>这个位置的点是不是缩写里的点（不该切）：Mr. / e.g. / U.S. / J.</summary>
     private static bool IsAbbreviationDot(string text, int j)
     {
+        // 后面紧跟的也是点 → 这是省略号的一段（etc... / U.S... / Mr....），不是缩写里的点。
+        // 不这么判的话，缩写表会把整段点吞掉，句末边界直接丢失（整句并进下一句）。
+        if (j + 1 < text.Length && text[j + 1] == '.') return false;
+
         int a = j;
         while (a >= 0 && (char.IsLetter(text[a]) || text[a] == '.')) a--;
         int b = j;
