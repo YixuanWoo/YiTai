@@ -46,6 +46,7 @@ public static class Diag
     private static long _refreshes, _refreshTicks, _refreshTicksMax;
     private static long _saves, _saveTicks;
     private static long _places, _placeTicks, _placeTicksMax;
+    private static long _copies, _copiesFail;
     private static long _undos;
 
     // ---- 最近一次刷新后的栏况（只有 UI 线程写）----
@@ -108,6 +109,18 @@ public static class Diag
     }
 
     public static void AddUndo() { if (On) _undos++; }
+
+    /// <summary>
+    /// 一次 Ctrl+Alt+C 的反馈（成功/失败各记一笔）。
+    /// 为什么单独记：这一条最能说明"按下去到底有没有反应"——
+    /// 连按几次、成没成，日志里数得出来，不必靠回忆。
+    /// </summary>
+    public static void AddCopy(bool ok)
+    {
+        if (!On) return;
+        _copies++;
+        if (!ok) _copiesFail++;
+    }
 
     /// <summary>
     /// 记一次"不该发生但发生了"的错误（全局异常兜底用）。
@@ -199,9 +212,12 @@ public static class Diag
             long saveTicks = Take(ref _saveTicks);
 
             long undos = Take(ref _undos);
+            long copies = Take(ref _copies);
+            long copiesFail = Take(ref _copiesFail);
 
             // 这一窗什么都没发生，就不写，省得日志全是零
-            if (clicks == 0 && layouts == 0 && refreshes == 0 && places == 0 && saves == 0 && undos == 0)
+            if (clicks == 0 && layouts == 0 && refreshes == 0 && places == 0 && saves == 0 && undos == 0
+                && copies == 0)
                 return;
 
             string mem = "?";
@@ -228,7 +244,7 @@ public static class Diag
                 $"place {places} avg {Ms(placeTicks / Math.Max(1, places)):0.0}ms max {Ms(placeMax):0.0}ms | " +
                 $"save {saves} avg {Ms(saveTicks / Math.Max(1, saves)):0.0}ms | " +
                 $"refresh {refreshes} avg {Ms(refreshTicks / Math.Max(1, refreshes)):0.0}ms max {Ms(refreshMax):0.0}ms | " +
-                $"undo {undos} | {_panes} | mem {mem} gc {gc} thr {thr} hnd {hnd}";
+                $"undo {undos} | copy {copies} fail {copiesFail} | {_panes} | mem {mem} gc {gc} thr {thr} hnd {hnd}";
 
             var sb = new StringBuilder();
             sb.AppendLine(line);

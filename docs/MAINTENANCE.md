@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **273 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **299 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -106,6 +106,7 @@
 | `AppSettings.cs` | `%APPDATA%\YiTai\settings.json`（`YITAI_CONFIG_DIR` 可重定向） |
 | `Markdown\MdDoc.cs` / `MdParser.cs` | Markdown → 中间结构；唯一解析入口 |
 | `Text\SentenceIndex.cs` / `RangeMath.cs` / `TextStats.cs` | 切句、区间运算、字数 |
+| `CopyCue.cs` | 复制成功/失败的提示音（纯计算合成 16 位单声道 WAV，零依赖） |
 
 `src\YiTai.App`（只碰界面）：
 
@@ -117,6 +118,7 @@
 | `MainWindow.LineNumbers.cs` | 逻辑行号 |
 | `Markdown\MdRender.cs` | 中间结构 → `FlowDocument`；**只有这里碰 WPF 渲染** |
 | `ProgressHighlightLayers.cs` | 底带/下划线/起笔标三层浮层 |
+| `MainWindow.CopyFeedback.cs` | 复制当前句的当场确认：浮条动画（`CopyToast`）+ 提示音播放器（`SoundPlayer`） |
 | `Theme.xaml` | 样式单一真源（改公共样式先想清楚影响面） |
 | `Diag.cs` / `App.xaml.cs` | 全局异常兜底 + `diag.log` |
 
@@ -261,6 +263,40 @@
   （证据：任务 output `data-safety-pre.json` / `data-safety-post.json`）。
 - **文档同步**：README「已知边界」省略号一条补点间空格口径、计时表"显示"行改为只在状态栏；
   TODO 新增第十批 T-35 / T-36（写验证方式）；CHANGELOG 修复/变更各一条；本文件 §0 测试数改 273。
+
+## 8.6 交接验收记录（2026-11-18，T-37：复制当前句的成功/失败反馈）
+
+- **症状（用户实测）**：按 `Ctrl+Alt+C` 之后"毫无反应"。原来的唯一反馈是状态栏一行 11.5px 浅灰字，
+  还和自动保存的「已保存 hh:mm:ss」抢同一个位置；更硬的断点是 `CopyCurrentSentence` 里
+  四条提前 `return`（没正文 / 指针取不到 / 空句 / `Clipboard.SetText` 抛异常）连那行灰字都没有。
+- **设计**（形式由执行岗定，逐条理由写在 `MainWindow.CopyFeedback.cs` 与 `CopyCue.cs` 的注释里）：
+  · **声音**：Core 新增 `CopyCue`（纯计算合成 16 位单声道 WAV，零第三方依赖）——
+    成功 100ms 上滑 780→1180Hz、峰值 0.28；失败 140ms 下滑 560→340Hz、峰值 0.34；
+    sin² 包络两端归零（不爆音）。一声就完、不排队：连按是同一个音重来，不叠加、不拖长。
+  · **视觉**：`MainWindow.xaml` 新增 `CopyToastLayer`（正文区底部、状态栏上方居中，`IsHitTestVisible=False`）：
+    成功绿 `✓` +「已复制当前句（N 字）」，失败橙 `！` + 一句原因；淡入 120ms，
+    成功停 1.15s、失败停 2.3s 后淡出。只动透明度与 6px 上浮（RenderTransform）——
+    不重排布局、不动焦点、不挡鼠标，连续按不会牵着正文跳。
+  · **失败可区分且不误导**：颜色（绿/橙）、符号（✓/！）、音调走向（上滑/下滑）、停留时长四处都不同；
+    失败路径**不写剪贴板**（`Clipboard.SetText` 全文件只出现一处），不会"报失败却把别的句子塞进去"。
+  · **反馈在写成功之后**：多了"按了没成"的明说，复制本身的三步（取句区间 → 渲染文档 TextRange 取纯文本 →
+    写剪贴板）一个字没动；提示音放不出来只记日志（`Diag.Error("复制提示音")`），不影响复制与浮条。
+- **测试**：**275 → 299 项**（第 24 节 24 条：WAV 头/格式/时长与采样数吻合、上滑与下滑的零交叉比较、
+  峰值区间、首尾归零、逐字节可复现，以及"成功反馈在 `Clipboard.SetText` 之后""失败必有反馈"
+  "`Clipboard.SetText` 只出现一次""浮条不吃鼠标"等源码锚）。先写断言后改代码，原有 275 条零删改零放宽。
+- **门禁**：`.\build.ps1` 退出码 0、Debug `0 个警告 / 0 个错误`、冒烟 **275 → 299 项全过**；
+  `dotnet build YiTai.slnx -c Release` 同样 0 警告 0 错误。
+- **真机**（`%TEMP%` 沙箱项目 + `YITAI_CONFIG_DIR` 重定向，未碰真实译稿/配置）：
+  · 成功两例（剪贴板与当前高亮句逐字对照）：第 1 句 →「第一段：夜里他把窗推开一条缝，海风灌了进来。」（22 字）；
+    第 2 句 `==灯亮着，屋里却没有人说话。==` →「第二段：灯亮着，屋里却没有人说话。」（17 字，无 `==`）。
+    浮条文字与状态栏同步（UIA 读数：「已复制当前句（22 字）」/「（17 字）」），
+    截图 `output/evidence/01…`、`02…`。
+  · 连按 10 次：诊断日志 `copy 10 fail 0`（一次不漏），第 2 下与第 10 下截图都能看到浮条（`03…`、`04…`）。
+  · 失败两例：切到空白栏 →「这一栏还没标进度，先点一下正文」；
+    另一进程用 `OpenClipboard` 占住剪贴板再按 →「剪贴板被别的程序占着，没能复制，请再按一次」，
+    放开后剪贴板仍是占住前那句（失败不污染剪贴板）。截图 `05…`、`06…`。
+  · 其它行为未受影响：状态栏计时照常走（截图 0:00:08 → 0:00:50 → 0:01:45）；
+    `Ctrl+Alt+Z` 仍推进（栏底第 1/5 句 → 第 2/5 句）。
 
 ## 9. 需要人拍板的事
 

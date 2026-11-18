@@ -18,6 +18,7 @@
 //   21    快捷键重排 + 复制当前句（T-32 / T-33，源码锚）
 //   22    工作计时显示挪状态栏（T-34，源码锚）
 //   23    英文省略号边界：点间带空格 . . . / 三点收尾引号括号 / 大写新句（T-35）
+//   24    复制当前句的成功/失败反馈：提示音波形 + 反馈接线源码锚（T-37）
 //
 // 退出码 0 = 全过，1 = 有失败。
 // ============================================================
@@ -1299,9 +1300,183 @@ Check("回归：普通句号 One. Two. Three. 仍 3 句（点间空格规则不�
       SentenceIndex.FromPlain("One. Two. Three.").Count == 3,
       SentenceIndex.FromPlain("One. Two. Three.").Count.ToString());
 
+// ============================================================
+// 24. 复制当前句的成功/失败反馈（T-37）
+// ============================================================
+// 为什么测这个：反馈是"声音 + 颜色"，看着最像纯界面、最容易被以后的人改坏：
+//   · 音是 Core 合成的，波形走向（上滑=成功 / 下滑=失败）、时长、音量都能算；
+//   · "失败也必须有反馈"这条靠源码锚守：连 Clipboard.SetText 只允许出现一次，
+//     失败路径不可能偷偷写剪贴板，也不会再退化成静默 return；
+//   · 浮条不吃鼠标（IsHitTestVisible=False）、成功文案与 T-33 一字不差，都钉住。
 Console.WriteLine();
-if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");
-else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
+Console.WriteLine("== 24. 复制当前句的成功/失败反馈（T-37）==");
+
+byte[] successWav = CopyCue.Wav(CopyCueKind.Success);
+byte[] failureWav = CopyCue.Wav(CopyCueKind.Failure);
+
+int SampleCount(byte[] wav) => (wav.Length - 44) / 2;
+short SampleAt(byte[] wav, int i)
+{
+    int p = 44 + i * 2;
+    return (short)(wav[p] | (wav[p + 1] << 8));
+}
+
+Check("成功提示音是合法 WAV（RIFF/WAVE/fmt /data 四个块都在）",
+      successWav.Length > 44
+      && Encoding.ASCII.GetString(successWav, 0, 4) == "RIFF"
+      && Encoding.ASCII.GetString(successWav, 8, 4) == "WAVE"
+      && Encoding.ASCII.GetString(successWav, 12, 4) == "fmt "
+      && Encoding.ASCII.GetString(successWav, 36, 4) == "data");
+
+Check("提示音格式：PCM / 单声道 / 44100 / 16 位（不用重采样就能直接放）",
+      successWav[20] == 1 && successWav[22] == CopyCue.Channels
+      && BitConverter.ToInt32(successWav, 24) == CopyCue.SampleRate
+      && BitConverter.ToInt16(successWav, 34) == CopyCue.BitsPerSample);
+
+Check("成功音 = 100ms（100 毫秒 × 44100 = 4410 个采样）",
+      SampleCount(successWav) == CopyCue.SampleRate * CopyCue.SuccessMs / 1000,
+      SampleCount(successWav).ToString());
+
+Check("失败音 = 140ms（比成功略长，留出读懂「为什么」的时间）",
+      SampleCount(failureWav) == CopyCue.SampleRate * CopyCue.FailureMs / 1000,
+      SampleCount(failureWav).ToString());
+
+// 零交叉数 ≈ 频率 × 2：上半段与下半段一比，走向就出来了。
+// 上是"办成了"、下是"没成"—— 这是两种音最本质的区别，闭着眼也分得开。
+int Crossings(byte[] wav, int from, int to)
+{
+    int n = 0;
+    short prev = SampleAt(wav, from);
+    for (int i = from + 1; i < to; i++)
+    {
+        short cur = SampleAt(wav, i);
+        if ((prev < 0 && cur >= 0) || (prev >= 0 && cur < 0)) n++;
+        prev = cur;
+    }
+    return n;
+}
+
+int half = SampleCount(successWav) / 2;
+int successFirst = Crossings(successWav, 0, half);
+int successSecond = Crossings(successWav, half, SampleCount(successWav));
+Check("成功音是上滑（后半段比前半段更密）",
+      successSecond > successFirst, $"{successFirst} → {successSecond}");
+
+int fHalf = SampleCount(failureWav) / 2;
+int failFirst = Crossings(failureWav, 0, fHalf);
+int failSecond = Crossings(failureWav, fHalf, SampleCount(failureWav));
+Check("失败音是下滑（后半段比前半段更疏）",
+      failSecond < failFirst, $"{failFirst} → {failSecond}");
+
+// 音量：峰值落在 0.15～0.5 满量程 —— 听得到，但不至于在安静房间里吓人一跳。
+int Peak(byte[] wav)
+{
+    int m = 0;
+    for (int i = 0; i < SampleCount(wav); i++)
+    {
+        int a = Math.Abs((int)SampleAt(wav, i));
+        if (a > m) m = a;
+    }
+    return m;
+}
+
+double successPeak = Peak(successWav) / (double)short.MaxValue;
+double failurePeak = Peak(failureWav) / (double)short.MaxValue;
+Check("成功音峰值在 0.15～0.5 之间（够听清，不刺耳）",
+      successPeak is > 0.15 and < 0.5, successPeak.ToString("0.00"));
+Check("失败音峰值在 0.15～0.5 之间，且不比成功更轻（更容易被注意到）",
+      failurePeak is > 0.15 and < 0.5 && failurePeak >= successPeak,
+      $"{failurePeak:0.00} vs {successPeak:0.00}");
+
+// 首尾必须归零：sin² 包络的意义就是"不爆音"。硬切开头会"啪"一声 —— 那才是真烦。
+bool StartsAndEndsSilent(byte[] wav)
+{
+    int n = SampleCount(wav);
+    for (int i = 0; i < 10; i++)
+    {
+        if (Math.Abs((int)SampleAt(wav, i)) > 400) return false;          // < 1.2% 满量程
+        if (Math.Abs((int)SampleAt(wav, n - 1 - i)) > 400) return false;
+    }
+    return true;
+}
+
+Check("两种音的首尾都归零（起止不爆音，连按也不会「啪啪」响）",
+      StartsAndEndsSilent(successWav) && StartsAndEndsSilent(failureWav));
+
+// 逐字节稳定：真机放的那一声，和交付给审查的 .wav 是同一段，可以复听比对。
+Check("同一 kind 两次生成逐字节一致（真机听到的 = 交付的这份 wav）",
+      CopyCue.Wav(CopyCueKind.Success).SequenceEqual(CopyCue.Wav(CopyCueKind.Success))
+      && CopyCue.Wav(CopyCueKind.Failure).SequenceEqual(CopyCue.Wav(CopyCueKind.Failure)));
+
+// ---- App 侧接线源码锚 ----
+string? cueSrc = FindUp("src\\YiTai.Core\\CopyCue.cs");
+string? feedbackSrc = FindUp("src\\YiTai.App\\MainWindow.CopyFeedback.cs");
+string? markerSrc = FindUp("src\\YiTai.App\\MainWindow.Marker.cs");
+string? toastXaml = FindUp("src\\YiTai.App\\MainWindow.xaml");
+
+Check("CopyCue.cs 找得到（源码锚）", cueSrc != null, cueSrc ?? "(没找到)");
+Check("MainWindow.CopyFeedback.cs 找得到（源码锚）", feedbackSrc != null, feedbackSrc ?? "(没找到)");
+Check("MainWindow.Marker.cs 找得到（源码锚）", markerSrc != null, markerSrc ?? "(没找到)");
+
+if (feedbackSrc != null)
+{
+    string fb = File.ReadAllText(feedbackSrc);
+
+    Check("源码锚：反馈声音真的交给播放器（SoundPlayer.Play）",
+          fb.Contains("new SoundPlayer(", StringComparison.Ordinal)
+          && fb.Contains(".Play()", StringComparison.Ordinal));
+
+    Check("源码锚：音源来自 Core 的 CopyCue.Wav（不是仓库外的 wav 文件）",
+          fb.Contains("CopyCue.Wav(", StringComparison.Ordinal));
+
+    Check("源码锚：声音失败只记日志，不抛给复制流程（catch + Diag.Error）",
+          fb.Contains("catch (Exception ex)", StringComparison.Ordinal)
+          && fb.Contains("Diag.Error(", StringComparison.Ordinal));
+
+    Check("源码锚：浮条每次触发都重新压入时间轴（BeginAnimation 替换上一轮）",
+          fb.Contains("BeginAnimation(UIElement.OpacityProperty", StringComparison.Ordinal));
+
+    Check("源码锚：成功绿 ✓、失败橙 ！（两种反馈不会看混）",
+          fb.Contains("\"✓\"", StringComparison.Ordinal)
+          && fb.Contains("\"！\"", StringComparison.Ordinal)
+          && fb.Contains("\"Warn\"", StringComparison.Ordinal));
+}
+
+if (markerSrc != null)
+{
+    string mk = File.ReadAllText(markerSrc);
+
+    Check("源码锚：成功反馈在写剪贴板之后才给（反馈不先于事实）",
+          mk.IndexOf("Clipboard.SetText(text)", StringComparison.Ordinal) >= 0
+          && mk.IndexOf("ShowCopyFeedback(true", StringComparison.Ordinal)
+             > mk.IndexOf("Clipboard.SetText(text)", StringComparison.Ordinal));
+
+    Check("源码锚：失败路径也一定有反馈（CopyFailed → ShowCopyFeedback(false)",
+          mk.Contains("ShowCopyFeedback(false", StringComparison.Ordinal)
+          && mk.Contains("private void CopyFailed(string reason)", StringComparison.Ordinal));
+
+    Check("源码锚：剪贴板只写一次，失败路径不可能写进去（不串句、不改复制结果）",
+          mk.Split(new[] { "Clipboard.SetText" }, StringSplitOptions.None).Length - 1 == 1);
+
+    Check("源码锚：成功文案与 T-33 一字不差（已复制当前句（N 字））",
+          mk.Contains("$\"已复制当前句（{text.Length} 字）\"", StringComparison.Ordinal));
+}
+
+if (toastXaml != null)
+{
+    string xaml = File.ReadAllText(toastXaml);
+
+    Check("源码锚：浮条不吃鼠标（IsHitTestVisible=False），连续按不会误点正文",
+          xaml.Contains("x:Name=\"CopyToastLayer\"", StringComparison.Ordinal)
+          && xaml.Contains("IsHitTestVisible=\"False\"", StringComparison.Ordinal));
+
+    Check("源码锚：浮条文本与图标都在 XAML 里（视觉反馈不是靠状态栏那行灰字）",
+          xaml.Contains("TxtCopyToastText", StringComparison.Ordinal)
+          && xaml.Contains("TxtCopyToastIcon", StringComparison.Ordinal));
+}
+
+Console.WriteLine();
+if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
 
 return failed == 0 ? 0 : 1;
 

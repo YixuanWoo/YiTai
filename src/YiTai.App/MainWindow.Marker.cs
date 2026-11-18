@@ -906,25 +906,35 @@ public partial class MainWindow
     // ---------------------------------------------------------------- 复制当前句
 
     /// <summary>
-    /// Ctrl+Alt+C：把当前高亮句复制到剪贴板（T-33）。
+    /// Ctrl+Alt+C：把当前高亮句复制到剪贴板（T-33），并当场给一声"复制成功"的确认（T-37）。
     /// 取活动栏 → 当前进度偏移 → 句区间 → 用渲染文档上的 TextPointer 构造 TextRange
     /// 取纯文本 —— 渲染文档里天然没有 ==/Markdown 标记/行号，复制出去就是干净的一句。
+    ///
+    /// 反馈的口径（T-37）：这个函数只有两种结局 —— 写进剪贴板（绿✓+上滑音）或
+    /// 说清为什么没写成（橙！+下滑音）。原先几条静默 return 的路径
+    /// （没正文、光标取不到区间、空句、剪贴板被占）全部改成"明说"，
+    /// 因为"按下去毫无反应"本身就是这张卡要消灭的问题。
+    /// 复制本身的取句、取文本、写剪贴板三步一个字没动：反馈只发生在写成功之后。
     /// </summary>
     private void CopyCurrentSentence()
     {
         var pane = ResolveActivePane();
-        if (pane?.Body?.Document == null) return;
+        if (pane?.Body?.Document == null)
+        {
+            CopyFailed("这一栏还没有能复制的正文，先打开一篇译文或资料");
+            return;
+        }
 
         int offset = CurrentOffset(pane);
         if (offset < 0)
         {
-            Status("这一栏还没标进度，先点一下正文");
+            CopyFailed("这一栏还没标进度，先点一下正文");
             return;
         }
 
         if (pane.Sentences is not { Count: > 0 })
         {
-            Status("这一栏还没切出句子（可能是空文件或表格）");
+            CopyFailed("这一栏还没切出句子（可能是空文件或表格）");
             return;
         }
 
@@ -932,14 +942,42 @@ public partial class MainWindow
 
         var start = MdRender.PointerAtOffset(pane.Body.Document, span.Start);
         var end = MdRender.PointerAtOffset(pane.Body.Document, span.End);
-        if (start == null || end == null) return;
+        if (start == null || end == null)
+        {
+            CopyFailed("这一句在正文里找不到位置，没能复制");
+            return;
+        }
 
         string text = new TextRange(start, end).Text.Trim();
-        if (text.Length == 0) return;
+        if (text.Length == 0)
+        {
+            CopyFailed("这一句是空的，没有可复制的内容");
+            return;
+        }
 
         try { Clipboard.SetText(text); }
-        catch (Exception) { return; }   // 剪贴板被别的程序占着：不崩，只是没复制成
+        catch (Exception)
+        {
+            // 剪贴板被别的程序占着。以前这里直接 return：按下去什么都没发生，
+            // 用户只会以为快捷键坏了 —— 现在明确说"没复制成，再按一次"。
+            CopyFailed("剪贴板被别的程序占着，没能复制，请再按一次");
+            return;
+        }
 
-        Status($"已复制当前句（{text.Length} 字）");
+        // 到这里剪贴板里已经是这句话了，才报成功：反馈不先于事实。
+        string msg = $"已复制当前句（{text.Length} 字）";
+        Status(msg);
+        ShowCopyFeedback(true, msg);
+    }
+
+    /// <summary>
+    /// 复制没成：状态栏写清原因，再给一条橙色浮条 + 下滑音。
+    /// 成功是绿✓/上滑，失败是橙！/下滑 —— 两种反馈在同一条通道上，
+    /// 不会出现"看着像成功、其实没复制"的误导。
+    /// </summary>
+    private void CopyFailed(string reason)
+    {
+        Status(reason);
+        ShowCopyFeedback(false, reason);
     }
 }

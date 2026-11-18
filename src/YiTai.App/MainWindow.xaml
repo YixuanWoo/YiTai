@@ -202,6 +202,43 @@
             </Border>
         </Grid>
 
+        <!-- ======================================================== 复制反馈浮条 -->
+        <!--
+            Ctrl+Alt+C 按下后的"当场确认"。为什么是这块、这个位置：
+              · 贴在正文区下方、正中，紧挨状态栏 —— 和原来那句状态栏提示同一片区域，
+                眼睛不用换地方；不落在正文行上（正文往上长，底部这条带最不挡读）。
+              · 只有淡入/淡出 + 6px 上浮，不动布局、不动焦点、不吃鼠标
+                （IsHitTestVisible=False）：连续按不会推着正文跳，也不会误点。
+              · 成功绿 ✓、失败橙 ！，同位置两种颜色两种符号：一眼分得清，不会把失败看成成功。
+              · 每次触发都从头重放，不排队、不叠加 —— 连按十下就是闪十下。
+        -->
+        <Grid x:Name="CopyToastLayer" Grid.Row="2" Margin="12,12,12,0"
+              IsHitTestVisible="False" Panel.ZIndex="20">
+            <Border x:Name="CopyToast"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="0,0,0,10" Padding="12,7"
+                    CornerRadius="7" BorderThickness="1"
+                    Background="{DynamicResource BgCard}"
+                    BorderBrush="{DynamicResource Done}"
+                    Opacity="0">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="CopyToastShift" Y="6"/>
+                </Border.RenderTransform>
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="12" ShadowDepth="1" Opacity="0.18" Color="#FF1F2933"/>
+                </Border.Effect>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="TxtCopyToastIcon" Text="✓"
+                               FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                               Margin="0,0,7,0" Foreground="{DynamicResource Done}"/>
+                    <TextBlock x:Name="TxtCopyToastText" Text=""
+                               FontSize="12.5" VerticalAlignment="Center" MaxWidth="380"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextMain}"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
         <!-- ======================================================== 状态栏 -->
         <Border Grid.Row="3" Background="{DynamicResource BgCard}"
                 BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0"
