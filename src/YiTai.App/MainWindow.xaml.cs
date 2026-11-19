@@ -739,7 +739,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var doc = MdRender.Build(MdParser.Parse(TbxTranslation.Text), MakeStyleFor(15, 1.8));
+            // 按行成段：编辑页是 TextBox，一个 \n 就是一行看得见的换行；
+            // 译文若"每句一行、句间只有单换行"，照默认口径预览会把整页拼成一整块（T-fdbe0163）。
+            // 只影响这里与译文对照栏，资料栏 / 原文仍走默认 Parse（软换行照旧合并）。
+            var doc = MdRender.Build(MdParser.Parse(TbxTranslation.Text, softBreakAsParagraph: true), MakeStyleFor(15, 1.8));
             PreviewDoc.Document = doc;
             ApplyPreviewAnnotations(doc);   // 批注包进文字里（没有批注就原样不动）
         }

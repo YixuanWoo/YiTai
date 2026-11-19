@@ -1708,6 +1708,104 @@ if (annXamlSrc != null)
           && ax.Contains("OnShowAnnotationPanel", StringComparison.Ordinal));
 }
 
+// ============================================================
+// 26. 译文预览按行分段（T-fdbe0163）
+// ============================================================
+// 为什么测这个：编辑页 TbxTranslation 是 TextBox，一个 \n 就是一个看得见的换行；
+// 预览页走 MdParser.Parse，默认把段内软换行拼成一整段 —— 译文若是"每句一行、句间只有单换行"，
+// 预览就挤成一整块（董事会反馈）。这里钉住两件事：
+//   ① 默认口径（资料栏 / 原文）一个字不动；
+//   ② 译文口径按行成段：段数、分段位置、每段锚点都与编辑页逐行对得上，且不吞字不错位。
+
+string softText = "第一句。\n第二句。\n第三句。\n";
+
+var byDefault = MdParser.Parse(softText);
+Check("默认口径：单换行仍并成一段（开关默认关）",
+      byDefault.Blocks.Count == 1 && byDefault.Blocks[0].LineBreakRole == MdLineBreakRole.None,
+      byDefault.Blocks.Count + " 块");
+Check("默认口径：拼回去的文字与以前一致",
+      Flat(byDefault.Blocks[0].Inlines) == "第一句。第二句。第三句。", Flat(byDefault.Blocks[0].Inlines));
+
+var byLine = MdParser.Parse(softText, softBreakAsParagraph: true);
+Check("译文口径：三行分成三段", byLine.Blocks.Count == 3, byLine.Blocks.Count + " 块");
+Check("译文口径：三块都是段落", byLine.Blocks.All(b => b.Kind == MdBlockKind.Paragraph));
+Check("译文口径：每段文字逐字等于该行、一个字不多不少",
+      string.Join("|", byLine.Blocks.Select(b => Flat(b.Inlines))) == "第一句。|第二句。|第三句。",
+      string.Join("|", byLine.Blocks.Select(b => Flat(b.Inlines))));
+Check("译文口径：每段锚在该行行首（0 / 5 / 10，含行尾那个 \n）",
+      string.Join("/", byLine.Blocks.Select(b => b.SourceOffset)) == "0/5/10",
+      string.Join("/", byLine.Blocks.Select(b => b.SourceOffset)));
+Check("译文口径：段内第一截的偏移也落在行首（批注/进度线靠它）",
+      byLine.Blocks.All(b => b.Inlines.Count > 0 && b.Inlines[0].SourceOffset == b.SourceOffset));
+Check("译文口径：首行标成段首、其余是续行",
+      string.Join("/", byLine.Blocks.Select(b => b.LineBreakRole.ToString()))
+          == "GroupStart/Continuation/Continuation",
+      string.Join("/", byLine.Blocks.Select(b => b.LineBreakRole.ToString())));
+
+// 空行 + 单换行混排：空行仍然是"段"的分界，连续空行不产生空块
+string mixedText = "一段一。\n一段二。\n\n二段一。\n二段二。\n";
+var mixedDefault = MdParser.Parse(mixedText);
+Check("同一份稿子的默认口径仍是两段（只有空行才分段）",
+      mixedDefault.Blocks.Count == 2, mixedDefault.Blocks.Count + " 块");
+
+var mixedLine = MdParser.Parse(mixedText, softBreakAsParagraph: true);
+Check("译文口径：空行 + 单换行 → 四段", mixedLine.Blocks.Count == 4, mixedLine.Blocks.Count + " 块");
+Check("译文口径：空行前后各成一组（段首/续行成对）",
+      string.Join("/", mixedLine.Blocks.Select(b => b.LineBreakRole.ToString()))
+          == "GroupStart/Continuation/GroupStart/Continuation");
+
+var blanks = MdParser.Parse("甲\n\n\n\n乙\n", true);
+Check("译文口径：三连空行也只分两段，不多出空块", blanks.Blocks.Count == 2, blanks.Blocks.Count + " 块");
+
+// 行内标记：==高亮== 的 SourceOffset 两种口径必须同一个数（分段方式不能挪锚）
+string hlText = "前==重点==后\n下一句\n";
+var hlDefault = MdParser.Parse(hlText);
+var hlLine = MdParser.Parse(hlText, true);
+Check("高亮偏移两种口径一个数（分段不挪锚）",
+      First(hlDefault.Blocks[0].Inlines, MdInlineKind.Highlight)?.SourceOffset == 3
+      && First(hlLine.Blocks[0].Inlines, MdInlineKind.Highlight)?.SourceOffset == 3,
+      First(hlLine.Blocks[0].Inlines, MdInlineKind.Highlight)?.SourceOffset.ToString());
+Check("译文口径：高亮那一段文字不缺不多", Flat(hlLine.Blocks[0].Inlines) == "前重点后",
+      Flat(hlLine.Blocks[0].Inlines));
+Check("译文口径：下一句自成一段",
+      hlLine.Blocks.Count == 2 && Flat(hlLine.Blocks[1].Inlines) == "下一句");
+
+// 行首缩进的行：块的锚点是行首（进度线立在这一行），文字那一截的锚点按 trim 后第一个字算
+var indented = MdParser.Parse("  缩进的行\n下一行\n", true);
+Check("译文口径：缩进行块锚在行首、文字锚在第一个字（0 / 2）",
+      indented.Blocks.Count == 2 && indented.Blocks[0].SourceOffset == 0
+      && indented.Blocks[0].Inlines[0].SourceOffset == 2
+      && Flat(indented.Blocks[0].Inlines) == "缩进的行",
+      indented.Blocks.Count > 0 ? indented.Blocks[0].SourceOffset + " / " + indented.Blocks[0].Inlines[0].SourceOffset : "没有块");
+
+// 源码锚：两条译文渲染链路都得显式开这个口径，资料栏不许开
+string? mainWinSrc = FindUp("src\\YiTai.App\\MainWindow.xaml.cs");
+string? panesLineSrc = FindUp("src\\YiTai.App\\MainWindow.Panes.cs");
+string? mdParserSrc = FindUp("src\\YiTai.Core\\Markdown\\MdParser.cs");
+
+if (mainWinSrc != null)
+{
+    string mw = File.ReadAllText(mainWinSrc);
+    Check("源码锚：译文预览按行成段（softBreakAsParagraph: true）",
+          mw.Contains("MdParser.Parse(TbxTranslation.Text, softBreakAsParagraph: true)", StringComparison.Ordinal));
+}
+
+if (panesLineSrc != null)
+{
+    string ps = File.ReadAllText(panesLineSrc);
+    Check("源码锚：对照栏只在译文文件上按行成段，资料栏仍走默认 Parse",
+          ps.Contains("softBreakAsParagraph: isTranslation", StringComparison.Ordinal)
+          && ps.Contains("IsTranslationPath(", StringComparison.Ordinal));
+}
+
+if (mdParserSrc != null)
+{
+    string mp = File.ReadAllText(mdParserSrc);
+    Check("源码锚：默认 Parse 的软换行合并原样在（补空格 / 中文直拼没被改）",
+          mp.Contains("var gap = MdInline.Plain(tight ? \"\" : \" \");", StringComparison.Ordinal)
+          && mp.Contains("softBreakAsParagraph = false", StringComparison.Ordinal));
+}
+
 Console.WriteLine();
 if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
 

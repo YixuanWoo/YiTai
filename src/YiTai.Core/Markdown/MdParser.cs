@@ -21,7 +21,19 @@ namespace YiTai.Core;
 
 public static class MdParser
 {
-    public static MdDoc Parse(string text)
+    /// <summary>
+    /// 把整篇 Markdown 拆成 <see cref="MdDoc"/>。
+    /// </summary>
+    /// <param name="text">整篇原文（CRLF 会先归一化成 \n）。</param>
+    /// <param name="softBreakAsParagraph">
+    /// 段内的单个软换行算不算段落边界。默认 <c>false</c>：照 Markdown 的规矩拼回一段
+    /// （资料栏 / 原文都走这条，行为一个字不动）。
+    /// 译文渲染链路（编辑页的预览、译文对照栏）传 <c>true</c>：编辑页是 TextBox，
+    /// 一个 <c>\n</c> 就是一个看得见的换行，预览要逐行对上才不会挤成一整块。
+    /// <para>无论哪个口径，每一截文字带的 SourceOffset 都是同一个坐标系（归一化原文下标），
+    /// 批注 / 进度线的锚点因此不会因为分段方式不同而漂。</para>
+    /// </param>
+    public static MdDoc Parse(string text, bool softBreakAsParagraph = false)
     {
         var doc = new MdDoc();
         if (string.IsNullOrEmpty(text)) return doc;
@@ -44,6 +56,32 @@ public static class MdParser
         void FlushPara()
         {
             if (paraLines.Count == 0) return;
+
+            // -------------------------------------------------- 译文口径：按行成段
+            //
+            // 译文稿常见"每句一行、句间只有单换行"，编辑页里那是一行行看得见的换行。
+            // 这个开关只给译文渲染链路用：每行各自成段，预览才与编辑页逐行对上。
+            // 不插 gap inline、也不拼字 —— 每行的 SourceOffset 本来就是行首，
+            // 批注 / 进度线的锚点照旧落在原来那些字上（不吞字、不错位）。
+            // 段首与续行分开标：空行分开的两段仍要有段间距，同一段里的续行则贴紧上一行。
+            if (softBreakAsParagraph)
+            {
+                for (int i = 0; i < paraLines.Count; i++)
+                {
+                    var one = new MdBlock
+                    {
+                        Kind = MdBlockKind.Paragraph,
+                        SourceOffset = paraLines[i].SourceOffset,
+                        LineBreakRole = i == 0 ? MdLineBreakRole.GroupStart : MdLineBreakRole.Continuation,
+                    };
+                    one.Inlines.AddRange(paraLines[i].Inlines);
+                    doc.Blocks.Add(one);
+                }
+
+                paraLines.Clear();
+                paraStart = -1;
+                return;
+            }
 
             var b = new MdBlock { Kind = MdBlockKind.Paragraph, SourceOffset = paraStart };
 

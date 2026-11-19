@@ -102,6 +102,26 @@ public sealed class MdTable
 }
 
 /// <summary>
+/// 译文预览口径下这一段的角色（默认口径一律是 <see cref="None"/>）。
+/// 为什么要有它：编辑页是 TextBox，一个 <c>\n</c> 就是一个看得见的换行；
+/// 译文常见排版是"每句一行、句间只有单换行"，预览若照默认把段内软换行拼回一段，
+/// 整页就挤成一整块（T-fdbe0163 的反馈）。所以译文那两条渲染链路会按行成段，
+/// 但"空行分开的两段"仍要有段间距 —— 于是要把"段首"与"续行"分开记，
+/// 渲染时才知道间距该加在哪一行（Core 只标角色，间距多少归 App）。
+/// </summary>
+public enum MdLineBreakRole
+{
+    /// <summary>默认 Markdown：一段就是一个块，段内软换行已经拼回一行。</summary>
+    None = 0,
+
+    /// <summary>按行分段时，这一块是这一"段"的第一行（段间距照常）。</summary>
+    GroupStart = 1,
+
+    /// <summary>按行分段时，这是软换行拆出来的续行：紧贴上一行，不另外加段间距。</summary>
+    Continuation = 2,
+}
+
+/// <summary>
 /// 段落里的一行原始文本。
 /// 只给解析器内部用：把一段的多行拼回去（Markdown 的软换行语义），
 /// 拼的时候每一截文字都带着自己的绝对偏移，"译到哪了"的竖线才落得准。
@@ -140,6 +160,12 @@ public sealed class MdBlock
 
     /// <summary>段落 / 标题 / 引用 / 列表项里的行内内容。</summary>
     public List<MdInline> Inlines { get; } = new();
+
+    /// <summary>
+    /// 按行分段（译文预览口径）时，这一块在原来那一段里的位置。
+    /// 默认口径恒为 <see cref="MdLineBreakRole.None"/> —— 资料栏 / 原文的渲染不受影响。
+    /// </summary>
+    public MdLineBreakRole LineBreakRole { get; set; } = MdLineBreakRole.None;
 
     /// <summary>列表项（只有 List 块用）。</summary>
     public List<MdItem> Items { get; } = new();

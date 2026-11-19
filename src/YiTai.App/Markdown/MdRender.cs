@@ -575,7 +575,15 @@ public static class MdRender
     {
         var p = new Paragraph
         {
-            Margin = new Thickness(0, 0, 0, st.FontSize * 0.82),
+            // 默认口径（资料栏 / 原文）段间距照旧挂在段尾，一个字不动。
+            // 译文口径（按行成段）里，续行要贴紧上一行 —— 编辑页里它们本来就是相邻两行；
+            // 段间距改挂在这一段首行的上边，空行分开的两段因此仍是两段，不会糊成一片。
+            Margin = block.LineBreakRole switch
+            {
+                MdLineBreakRole.Continuation => new Thickness(0),
+                MdLineBreakRole.GroupStart => new Thickness(0, st.FontSize * 0.82, 0, 0),
+                _ => new Thickness(0, 0, 0, st.FontSize * 0.82),
+            },
             LineHeight = st.FontSize * st.LineSpacing,
         };
         AppendInlines(p, block.Inlines, st);

@@ -1095,12 +1095,26 @@ public partial class MainWindow
 
         int marker = pane.Markable ? ProgressStore.Get(_progress, pane.ProgressKey) : -1;
 
+        // 译文栏与预览同一口径：本项目 translations\ 里的译文按行成段
+        // （编辑页是 TextBox，一个 \n 就是一行看得见的换行；不按行分，预览/对照栏会挤成一整块）。
+        // 资料栏（原文、PDF、别人的稿子）仍走默认 Parse —— 软换行照旧合并，别顺手改坏别的栏。
+        bool isTranslation = false;
+        if (_store != null && pane.Spec.Path.Length > 0)
+        {
+            try
+            {
+                isTranslation = IsTranslationPath(Path.GetFullPath(ProjectLayout.ToAbsolute(_store.Root, pane.Spec.Path)));
+            }
+            catch (Exception) { /* 路径拼不出来就按资料栏渲染，不影响这一栏显示 */ }
+        }
+
         try
         {
             if (!exists)
                 pane.Body.Document = MdRender.Message(text, style);
             else if (isMarkdown)
-                pane.Body.Document = MdRender.Build(MdParser.Parse(text), style);
+                pane.Body.Document = MdRender.Build(
+                    MdParser.Parse(text, softBreakAsParagraph: isTranslation), style);
             else
                 pane.Body.Document = MdRender.Plain(text, style);   // .txt 只排版，不解释格式
         }
