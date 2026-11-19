@@ -327,28 +327,67 @@ public partial class MainWindow
 
     private void OnPaneMouseRightUp(PaneView pane, MouseButtonEventArgs e)
     {
-        if (!pane.Markable) return;
-        if (IsFromScrollBar(e.OriginalSource)) return;   // 在滚动条上右键，不弹进度菜单
+        if (IsFromScrollBar(e.OriginalSource)) return;   // 在滚动条上右键，不弹菜单
 
         ForgetUndo();   // 右键要弹菜单了：账本清掉，免得下一记双击把右键之前那条线撤走
 
-        int offset = OffsetAtPoint(pane, e.GetPosition(pane.Body));
-        if (offset < 0) return;
+        Point at = e.GetPosition(pane.Body);
 
-        if (pane.Sentences != null && pane.Sentences.Count > 0)
+        int offset = pane.Markable ? OffsetAtPoint(pane, at) : -1;
+        if (offset >= 0 && pane.Sentences != null && pane.Sentences.Count > 0)
             offset = pane.Sentences.StartOf(offset);
 
         _pendingOffset = offset;
 
+        // 批注：只有"这一栏放的是译文"才出现（AnnKey 由 ApplyPaneAnnotations 给）
+        bool canAnn = pane.AnnKey.Length > 0;
+        bool hasSel = canAnn && pane.Body.Selection != null && !pane.Body.Selection.IsEmpty;
+        string annId = canAnn ? AnnotationIdAtPane(pane, at) : "";
+
+        if (offset < 0 && !hasSel && annId.Length == 0) return;   // 空白处，没什么可做的
+
         var menu = new ContextMenu { PlacementTarget = pane.Body };
 
-        var put = new MenuItem { Header = "把进度标记放在这里" };
-        put.Click += (_, _) => SetMarker(pane, _pendingOffset);
-        menu.Items.Add(put);
+        var selNow = pane.Body.Selection;
+        if (selNow != null && !selNow.IsEmpty)
+            menu.Items.Add(new MenuItem
+            {
+                Header = "复制",
+                Command = ApplicationCommands.Copy,
+                CommandTarget = pane.Body,
+            });
 
-        var clear = new MenuItem { Header = "清除进度标记" };
-        clear.Click += (_, _) => ClearMarker(pane);
-        menu.Items.Add(clear);
+        if (offset >= 0)
+        {
+            var put = new MenuItem { Header = "把进度标记放在这里" };
+            put.Click += (_, _) => SetMarker(pane, _pendingOffset);
+            menu.Items.Add(put);
+
+            var clear = new MenuItem { Header = "清除进度标记" };
+            clear.Click += (_, _) => ClearMarker(pane);
+            menu.Items.Add(clear);
+        }
+
+        if (canAnn)
+        {
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+
+            var addAnn = new MenuItem
+            {
+                Header = hasSel ? "为选中文字加批注…" : "为选中文字加批注…（先在正文里选中文字）",
+                IsEnabled = hasSel,
+            };
+            if (hasSel) addAnn.Click += (_, _) => AddAnnotationForPane(pane);
+            menu.Items.Add(addAnn);
+
+            var editAnn = new MenuItem { Header = "改这条批注…", IsEnabled = annId.Length > 0 };
+            if (annId.Length > 0) editAnn.Click += (_, _) => EditAnnotation(annId);
+            menu.Items.Add(editAnn);
+
+            var delAnn = new MenuItem { Header = "删这条批注", IsEnabled = annId.Length > 0 };
+            if (annId.Length > 0) delAnn.Click += (_, _) => DeleteAnnotation(annId);
+            menu.Items.Add(delAnn);
+        }
 
         // 必须等这一下右键彻底走完再弹：就在抬起事件里弹，菜单会立刻吃到同一次抬起，
         // 第一个菜单项等于被"自己点掉"——右键就变成了直接标进度。

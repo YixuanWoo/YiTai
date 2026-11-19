@@ -34,6 +34,7 @@ public static class ProjectLayout
     public const string ProgressFileName = "progress.json";
     public const string PaneLayoutFileName = "panes.json";
     public const string WorkTimeFileName = "worktime.json";
+    public const string AnnotationsFileName = "annotations.json";
 
     public static string ProjectFile(string root) => Path.Combine(root, ProjectFileName);
     public static string Sources(string root) => Path.Combine(root, SourcesDirName);
@@ -62,6 +63,14 @@ public static class ProjectLayout
     /// project.json 与既有 .yitai 文件的结构一个字都不动。
     /// </summary>
     public static string WorkTimeFile(string root) => Path.Combine(Private(root), WorkTimeFileName);
+
+    /// <summary>
+    /// 译文批注，放 .yitai\annotations.json。
+    /// 和进度、栏位、工时同理：是"我在这篇稿子上写的意见"，不是书本身的属性。
+    /// **只新增这个文件**：旧项目没有它照样打开（读到"没有批注"就是了），
+    /// project.json / progress.json / panes.json / worktime.json / 译文正文一个字都不动。
+    /// </summary>
+    public static string AnnotationsFile(string root) => Path.Combine(Private(root), AnnotationsFileName);
 
     /// <summary>
     /// 建好一个项目"必须有"的空目录（不覆盖已存在的内容）。

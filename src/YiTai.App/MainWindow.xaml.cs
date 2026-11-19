@@ -61,6 +61,8 @@ public partial class MainWindow : Window
 
         InitLineNumbers();  // 译文栏左侧的行号
 
+        InitAnnotationUi(); // 译文批注：预览右键加批注、批注列表、悬停显示
+
         Width = _settings.WindowWidth;
         Height = _settings.WindowHeight;
         if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
@@ -151,6 +153,7 @@ public partial class MainWindow : Window
         _settings.LastProjectRoot = _store.Root;
 
         LoadProgress();   // 这个项目"译到哪了"
+        LoadAnnotations();  // 这个项目的译文批注（没有这个文件就是空表，旧项目照常打开）
 
         // 译文清单以磁盘为准：translations\ 里的 md/txt 一律出现在下拉里，
         // 不要求"先有源文件"，也不跟源文件一一对应。
@@ -388,6 +391,8 @@ public partial class MainWindow : Window
 
         RefreshPanes();   // 缩放之类的栏内状态刷一下（栏里放什么是不跟着译文变的）
         if (_previewing) RefreshPreview();
+        else UpdateAnnotationButton(CurrentAnnotationViews().Count);   // 换译文：批注枚数跟着换
+        RefreshPanelIfOpen();
         UpdateStat();
         Status(_missingTrans ? "这篇译文的文件读不了，先别写" : "已载入");
     }
@@ -734,7 +739,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            PreviewDoc.Document = MdRender.Build(MdParser.Parse(TbxTranslation.Text), MakeStyleFor(15, 1.8));
+            var doc = MdRender.Build(MdParser.Parse(TbxTranslation.Text), MakeStyleFor(15, 1.8));
+            PreviewDoc.Document = doc;
+            ApplyPreviewAnnotations(doc);   // 批注包进文字里（没有批注就原样不动）
         }
         catch (Exception)
         {

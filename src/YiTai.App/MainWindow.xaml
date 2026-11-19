@@ -111,6 +111,9 @@
                                 <TextBlock x:Name="TxtTrPath" FontSize="11" MaxWidth="300"
                                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFaint}"/>
+                                <Button x:Name="BtnAnnotate" Content="批注" Style="{StaticResource BtnMini}"
+                                        Click="OnShowAnnotationPanel" Margin="6,0,0,0"
+                                        ToolTip="列出本篇译文的全部批注；在预览里选中文字后右键即可加批注"/>
                                 <Button x:Name="BtnPreview" Content="预览" Style="{StaticResource BtnMini}"
                                         Click="OnTogglePreview" Margin="6,0,0,0"
                                         ToolTip="把译文按 Markdown 样式渲染出来看；再点一下回到编辑"/>

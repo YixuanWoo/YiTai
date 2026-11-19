@@ -84,6 +84,15 @@ public partial class MainWindow
         /// <summary>文档里 ==高亮== 的源偏移区间：底带碰上它们要让路。</summary>
         public List<(int Start, int End)> HighlightRanges = new();
 
+        /// <summary>
+        /// 这一栏放的是译文时，这份文件在 annotations.json 里的键（rel:/abs:）；资料栏为空。
+        /// 只给译文批注 —— 资料栏（原文、PDF、别人的稿子）不掺和。
+        /// </summary>
+        public string AnnKey = "";
+
+        /// <summary>这一栏画上去的批注（已回贴的文档区间）。</summary>
+        public List<AnnotationView> AnnViews = new();
+
         /// <summary>栏头那枚"活动栏"实心圆点。</summary>
         public System.Windows.Shapes.Ellipse? Dot;
 
@@ -1113,6 +1122,10 @@ public partial class MainWindow
         // ==高亮== 的区间也取出来，底带碰上它们要让路（改画加深下划线）。
         pane.Sentences = pane.Markable ? MdRender.SentenceIndexFor(pane.Body.Document) : null;
         pane.HighlightRanges = MdRender.HighlightRanges(pane.Body.Document);
+
+        // 批注：这一栏要是本项目 translations\ 里的译文，就把批注也包进正文
+        // （与预览共用同一份 annotations.json；资料栏不掺和）。
+        ApplyPaneAnnotations(pane, text);
 
         if (pane.Caption != null)
         {

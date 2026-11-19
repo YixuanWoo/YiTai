@@ -455,6 +455,56 @@ public static class MdRender
         return map.Count > 0 ? map[map.Count - 1].TagStart + map[map.Count - 1].Len : 0;
     }
 
+    /// <summary>文档里所有文字截（含粗体/斜体/链接里那些）。批注层用同一份遍历口径。</summary>
+    public static IEnumerable<Run> TextRuns(FlowDocument doc) => AllRuns(doc);
+
+    /// <summary>
+    /// 文本位置 → 文档偏移（Run.Tag 那套坐标，也就是 progress.json 的坐标系）。
+    ///
+    /// 落在某一截文字里就是"这一截的起点 + 在这一截里的第几个字"；
+    /// 落在段落空白、表格（BlockUIContainer）上返回 null —— 那里没有字可批注。
+    /// 偏移与 <see cref="PointerAtOffset"/> 互逆：PointerAtOffset(OffsetAtPointer(p)) 落回同一截里。
+    /// </summary>
+    public static int? OffsetAtPointer(FlowDocument doc, TextPointer? pos)
+    {
+        if (doc == null || pos == null) return null;
+
+        foreach (Run run in AllRuns(doc))
+        {
+            if (run.Tag is not int start) continue;
+
+            var cs = run.ContentStart;
+            var ce = run.ContentEnd;
+
+            if (pos.CompareTo(cs) < 0) continue;
+            if (pos.CompareTo(ce) > 0) continue;
+
+            int delta = cs.GetOffsetToPosition(pos);   // 这一截是 1:1 对应文档的
+            if (delta < 0) continue;
+            if (delta > run.Text.Length) delta = run.Text.Length;
+
+            return start + delta;
+        }
+
+        return null;
+    }
+
+    /// <summary>文本位置所在的最近一截文字（找不到给 null）。批注命中测试用。</summary>
+    public static Run? RunAtPointer(FlowDocument doc, TextPointer? pos)
+    {
+        if (doc == null || pos == null) return null;
+
+        foreach (Run run in AllRuns(doc))
+        {
+            if (run.Tag is not int) continue;
+            if (pos.CompareTo(run.ContentStart) < 0) continue;
+            if (pos.CompareTo(run.ContentEnd) > 0) continue;
+            return run;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// 文档偏移之前有多少个非空白字。
     /// 底栏的"译到 X/Y 字（Z%）"要用它 ——

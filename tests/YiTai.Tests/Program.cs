@@ -1475,6 +1475,239 @@ if (toastXaml != null)
           && xaml.Contains("TxtCopyToastIcon", StringComparison.Ordinal));
 }
 
+// ============================================================
+// 25. 译文批注（T-a451712a）
+// ============================================================
+// 为什么测这组：批注的命门有两处，都是"看起来没事、出事就丢数据"：
+//   ① 文件本身 —— 新项目没有它、坏 JSON、写一半断电，都不能连累项目打不开；
+//   ② 锚点 —— 正文被改过之后，偏移对不上时"回贴"还是"硬贴"，
+//      选错就会把批注焊到别的句子上。这里把两条路都钉死。
+// 渲染那半截（Span / ToolTip / 与高亮合成后的实际像素）在 WPF 里，冒烟测试跑不到，
+// 由真机探针 + 下面的源码锚守；纯区间合成由 AnnotationMath 在这里直接算。
+Console.WriteLine();
+Console.WriteLine("== 25. 译文批注（annotations.json + 区间合成）==");
+
+string annBox = NewSandbox();
+string annRoot = Path.Combine(annBox, "批注译本");
+var annStore = ProjectStore.CreateNew(annRoot, "批注译本");
+
+Check("新项目没有 annotations.json（旧项目天然兼容）",
+      !File.Exists(ProjectLayout.AnnotationsFile(annRoot)));
+
+var annEmpty = AnnotationStore.Load(annRoot);
+Check("没有文件时 Load 返回空表、不抛", annEmpty.Items.Count == 0);
+
+File.WriteAllText(ProjectLayout.AnnotationsFile(annRoot), "{ 这不是 JSON");
+var annBad = AnnotationStore.Load(annRoot);
+bool annProjectOpens = false;
+try { annProjectOpens = ProjectStore.Open(annRoot) != null; } catch (Exception) { annProjectOpens = false; }
+Check("坏 JSON 当空表、项目照样打开（绝不连累）", annBad.Items.Count == 0 && annProjectOpens);
+
+File.Delete(ProjectLayout.AnnotationsFile(annRoot));
+
+string annTr = Path.Combine(ProjectLayout.Translations(annRoot), "ch01.md");
+string annText = "第一章\n\n他站在门口，没有说话。\n";
+File.WriteAllText(annTr, annText);
+
+string annKey = ProgressStore.KeyFor(annRoot, annTr);
+Check("项目内译文用 rel: 键（整个文件夹搬走不断链）",
+      annKey.StartsWith("rel:", StringComparison.Ordinal), annKey);
+
+string annNorm = AnnotationStore.Normalize(annText);
+int annLen = "他站在门口".Length;   // 5 个字，别数错（原来按 6 算，锚点全歪一格）
+int annAt = annNorm.IndexOf("他站在门口", StringComparison.Ordinal);
+Check("译文里找得到要批注的片段", annAt >= 0 && annNorm.Substring(annAt, annLen) == "他站在门口");
+
+var annState = AnnotationStore.Load(annRoot);
+var annItem = AnnotationStore.Create(annKey, annAt, annAt + annLen, "他站在门口", "这句太硬", DateTime.Now);
+AnnotationStore.Add(annState, annItem);
+AnnotationStore.Save(annRoot, annState);
+
+Check("落盘位置就是 .yitai\\annotations.json", File.Exists(ProjectLayout.AnnotationsFile(annRoot)));
+Check("原子写不留 .tmp（先 .tmp 再 move）", !File.Exists(ProjectLayout.AnnotationsFile(annRoot) + ".tmp"));
+
+string annJson = File.ReadAllText(ProjectLayout.AnnotationsFile(annRoot));
+Check("中文不转 \\uXXXX（UnsafeRelaxedJsonEscaping）",
+      annJson.Contains("这句太硬", StringComparison.Ordinal)
+      && !annJson.Contains("\\u", StringComparison.Ordinal));
+
+var annBack = AnnotationStore.Load(annRoot);
+var annRound = AnnotationStore.ItemsFor(annBack, annKey);
+Check("往返：条数 / 键 / 偏移 / quote / 正文都对",
+      annRound.Count == 1
+      && annRound[0].FileKey == annKey
+      && annRound[0].Start == annAt && annRound[0].End == annAt + annLen
+      && annRound[0].Quote == "他站在门口" && annRound[0].Body == "这句太硬");
+
+var annEdit = annRound[0];
+annEdit.Body = "这句太硬，建议改成「他没有说话」";
+annEdit.Modified = DateTime.Now.AddMinutes(1).ToString("o");
+AnnotationStore.Save(annRoot, annBack);
+
+var annBack2 = AnnotationStore.Load(annRoot);
+Check("改正文之后落盘往返仍对（Id 不变）",
+      AnnotationStore.Find(annBack2, annEdit.Id)?.Body == "这句太硬，建议改成「他没有说话」");
+
+AnnotationStore.Remove(annBack2, annEdit.Id);
+AnnotationStore.Save(annRoot, annBack2);
+var annBack3 = AnnotationStore.Load(annRoot);
+Check("删批注后表里没有它", AnnotationStore.ItemsFor(annBack3, annKey).Count == 0);
+Check("删批注没碰译文正文一个字", File.ReadAllText(annTr) == annText);
+
+// ---- 锚点：原位 / 漂移回贴 / 找不到就如实未定位 ----
+var probe = AnnotationStore.Create(annKey, annAt, annAt + annLen, "他站在门口", "", DateTime.Now);
+var atHome = AnnotationStore.Anchor(probe, annNorm);
+Check("锚点原位：偏移处就是 quote，原样返回",
+      atHome.Start == annAt && atHome.End == annAt + annLen,
+      atHome.Start.ToString());
+
+string shifted = "楔子\n\n" + annNorm;
+var atShifted = AnnotationStore.Anchor(probe, shifted);
+Check("正文前面插了字：按 quote 回贴到新位置",
+      atShifted.Start == shifted.IndexOf("他站在门口", StringComparison.Ordinal)
+      && atShifted.End == atShifted.Start + annLen,
+      atShifted.Start.ToString());
+
+string rewritten = annNorm.Replace("他站在门口", "她离开了房间");
+var atLost = AnnotationStore.Anchor(probe, rewritten);
+Check("原文被改掉：如实返回未定位，绝不硬贴到别的文字上",
+      atLost.Start == -1 && atLost.End == -1, $"{atLost.Start}/{atLost.End}");
+
+string twice = "他站在门口。\n\n他站在门口。\n";
+var probeSecond = AnnotationStore.Create(annKey, twice.LastIndexOf("他站在门口", StringComparison.Ordinal),
+                                         twice.LastIndexOf("他站在门口", StringComparison.Ordinal) + annLen,
+                                         "他站在门口", "", DateTime.Now);
+string prefixed = "序\n" + twice;   // 前缀短一点，两处距原偏移不等远，才测得出"取最近"
+var atNearest = AnnotationStore.Anchor(probeSecond, prefixed);
+Check("附近有两处同文：取离原偏移最近的一处（不乱跳）",
+      atNearest.Start == prefixed.LastIndexOf("他站在门口", StringComparison.Ordinal),
+      atNearest.Start.ToString());
+
+// ---- 键不串：同名不同目录 / 项目外 ----
+string annOtherDir = Path.Combine(annRoot, "sources");
+Directory.CreateDirectory(annOtherDir);
+string annOther = Path.Combine(annOtherDir, "ch01.md");
+File.WriteAllText(annOther, "同名但另一份");
+Check("同名不同目录 → 不同键（在 A 上标的批注不会跑到 B 上）",
+      ProgressStore.KeyFor(annRoot, annOther) != annKey);
+
+string annOutside = Path.Combine(annBox, "项目外.md");
+File.WriteAllText(annOutside, "项目外的一份");
+Check("项目外文件用 abs: 键（不冒充项目内）",
+      ProgressStore.KeyFor(annRoot, annOutside).StartsWith("abs:", StringComparison.Ordinal));
+
+var annTwoKeys = new AnnotationState();
+AnnotationStore.Add(annTwoKeys, AnnotationStore.Create(annKey, 0, 3, "第一章", "一", DateTime.Now));
+AnnotationStore.Add(annTwoKeys, AnnotationStore.Create(ProgressStore.KeyFor(annRoot, annOther), 0, 3, "同名", "二", DateTime.Now));
+Check("按文件键取批注：两份同名文件互不串",
+      AnnotationStore.ItemsFor(annTwoKeys, annKey).Count == 1
+      && AnnotationStore.ItemsFor(annTwoKeys, ProgressStore.KeyFor(annRoot, annOther)).Count == 1);
+
+// ---- 区间合成：批注 + 既有 ==高亮== 都要在 ----
+var annRanges = new List<(string Id, int Start, int End)> { ("a", 5, 15) };
+var hlRanges = new List<(int Start, int End)> { (10, 12) };
+
+var slices = AnnotationMath.Slice(0, 20, annRanges, hlRanges);
+Check("切段：批注/高亮的边界都切开（5 段：0-5 5-10 10-12 12-15 15-20）",
+      slices.Count == 5 && slices[0].Start == 0 && slices[4].End == 20, slices.Count.ToString());
+
+bool SliceAt(int from, int to, bool hasAnn, bool hl)
+{
+    foreach (var s in slices)
+        if (s.Start == from && s.End == to)
+            return s.HasAnnotation == hasAnn && s.Highlighted == hl;
+    return false;
+}
+
+Check("批注盖住、无高亮的那段：有批注、无高亮（可以铺浅底）",
+      SliceAt(5, 10, true, false));
+Check("批注与高亮重叠的那段：两者都在（高亮没被吃掉，改画下划线）",
+      SliceAt(10, 12, true, true));
+Check("批注尾巴（高亮之后）：有批注、无高亮",
+      SliceAt(12, 15, true, false));
+
+var noAnn = AnnotationMath.Slice(0, 20, null, hlRanges);
+Check("没有批注：原区间一字不切，全部 HasAnnotation=false（渲染层可以完全不动）",
+      noAnn.Count == 3 && !noAnn[0].HasAnnotation && !noAnn[1].HasAnnotation && !noAnn[2].HasAnnotation
+      && noAnn[1].Highlighted);
+
+var twoAnn = new List<(string Id, int Start, int End)> { ("a", 2, 8), ("b", 6, 12) };
+var overlap = AnnotationMath.Slice(0, 20, twoAnn, null);
+bool BothAt(int from, int to)
+{
+    foreach (var s in overlap)
+        if (s.Start == from && s.End == to)
+            return s.ItemIds.Count == 2 && s.ItemIds[0] == "a" && s.ItemIds[1] == "b";
+    return false;
+}
+Check("两条批注叠在同一截：计划里两条都记着（不会只画一条）", BothAt(6, 8));
+
+// ---- App 侧接线源码锚 ----
+string? mdRenderSrc = FindUp("src\\YiTai.App\\Markdown\\MdRender.cs");
+string? annRenderSrc = FindUp("src\\YiTai.App\\AnnotationRender.cs");
+string? annUiSrc = FindUp("src\\YiTai.App\\MainWindow.Annotations.cs");
+string? annStoreSrc = FindUp("src\\YiTai.Core\\Project\\AnnotationStore.cs");
+string? annXamlSrc = FindUp("src\\YiTai.App\\MainWindow.xaml");
+
+Check("MdRender.cs / AnnotationRender.cs / MainWindow.Annotations.cs / MainWindow.xaml 都在",
+      mdRenderSrc != null && annRenderSrc != null && annUiSrc != null && annXamlSrc != null);
+
+if (mdRenderSrc != null)
+{
+    string md = File.ReadAllText(mdRenderSrc);
+    Check("源码锚：偏移反查 OffsetAtPointer 与 PointerAtOffset 同一套坐标（互逆）",
+          md.Contains("public static int? OffsetAtPointer(", StringComparison.Ordinal)
+          && md.Contains("public static TextPointer? PointerAtOffset(", StringComparison.Ordinal));
+}
+
+if (annRenderSrc != null)
+{
+    string ar = File.ReadAllText(annRenderSrc);
+    Check("源码锚：批注在正文里包 Span（Tag=ann:），不是只在面板里列",
+          ar.Contains("Tag = \"ann:\"", StringComparison.Ordinal));
+    Check("源码锚：悬停即显示（Span.ToolTip = 批注正文）",
+          ar.Contains("ToolTip = body", StringComparison.Ordinal));
+    Check("源码锚：橙色虚线下划线（与进度高亮的实线/底带区分开）",
+          ar.Contains("TextDecorationLocation.Underline", StringComparison.Ordinal)
+          && ar.Contains("DashStyles.Dash", StringComparison.Ordinal));
+    Check("源码锚：重叠高亮处只画下划线、不铺底（两片半透明色不叠脏）",
+          ar.Contains("if (!slice.Highlighted) inner.Background = AnnBand;", StringComparison.Ordinal));
+}
+
+if (annUiSrc != null)
+{
+    string au = File.ReadAllText(annUiSrc);
+    Check("源码锚：预览右键加批注（选中文字即可）",
+          au.Contains("OnPreviewContextMenuOpening", StringComparison.Ordinal)
+          && au.Contains("SelectedRangeInPreview", StringComparison.Ordinal));
+    Check("源码锚：加/改/删都落盘后重画（不是只改内存）",
+          au.Contains("SaveAnnotations();", StringComparison.Ordinal)
+          && au.Contains("RefreshPreview();", StringComparison.Ordinal));
+    Check("源码锚：对照栏里的译文也画批注（切栏/改字号后不丢）",
+          au.Contains("ApplyPaneAnnotations(", StringComparison.Ordinal)
+          && au.Contains("IsTranslationPath", StringComparison.Ordinal));
+}
+
+if (annStoreSrc != null)
+{
+    string ast = File.ReadAllText(annStoreSrc);
+    Check("源码锚：批注只写 annotations.json（不看也不写 progress/project）",
+          ast.Contains("ProjectLayout.AnnotationsFile", StringComparison.Ordinal)
+          && !ast.Contains("ProgressFile(", StringComparison.Ordinal)
+          && !ast.Contains("ProjectFile(", StringComparison.Ordinal));
+    Check("源码锚：原子写（先 .tmp 再 move）",
+          ast.Contains("string tmp = file + \".tmp\";", StringComparison.Ordinal)
+          && ast.Contains("File.Move(tmp, file, overwrite: true)", StringComparison.Ordinal));
+}
+
+if (annXamlSrc != null)
+{
+    string ax = File.ReadAllText(annXamlSrc);
+    Check("源码锚：译文栏有「批注」按钮（打开本页批注列表）",
+          ax.Contains("x:Name=\"BtnAnnotate\"", StringComparison.Ordinal)
+          && ax.Contains("OnShowAnnotationPanel", StringComparison.Ordinal));
+}
+
 Console.WriteLine();
 if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
 

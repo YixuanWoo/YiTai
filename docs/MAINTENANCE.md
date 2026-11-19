@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **299 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **336 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -117,6 +117,8 @@
 | `Project\ProjectLayout.cs` | **唯一拼路径的地方** |
 | `Project\ProgressStore.cs` | 进度键、旧键迁移与认领 |
 | `Project\PaneLayoutStore.cs` | `.yitai\panes.json` |
+| `Project\AnnotationStore.cs` | `.yitai\annotations.json`：批注的读写（原子写）、按 quote 就近回贴锚点 |
+| `Text\AnnotationMath.cs` | 批注区间与 `==高亮==` 的切段（纯函数，无界面概念） |
 | `Project\ProjectMeta.cs` | 项目数据模型（只有译文清单，没有源文件清单） |
 | `AppSettings.cs` | `%APPDATA%\YiTai\settings.json`（`YITAI_CONFIG_DIR` 可重定向） |
 | `Markdown\MdDoc.cs` / `MdParser.cs` | Markdown → 中间结构；唯一解析入口 |
@@ -134,6 +136,9 @@
 | `Markdown\MdRender.cs` | 中间结构 → `FlowDocument`；**只有这里碰 WPF 渲染** |
 | `ProgressHighlightLayers.cs` | 底带/下划线/起笔标三层浮层 |
 | `MainWindow.CopyFeedback.cs` | 复制当前句的当场确认：浮条动画（`CopyToast`）+ 提示音播放器（`SoundPlayer`） |
+| `AnnotationRender.cs` | 批注 → `Span` 包层（橙色虚线下划线 + 极浅底 + ToolTip）；与 `==高亮==` 合成的唯一处 |
+| `MainWindow.Annotations.cs` | 批注的加/改/删、本页面板、译文预览与对照栏的批注挂载与回贴 |
+| `AnnotationWindows.cs` | 「加批注 / 改批注」与「本页批注」两个窗 |
 | `Theme.xaml` | 样式单一真源（改公共样式先想清楚影响面） |
 | `Diag.cs` / `App.xaml.cs` | 全局异常兜底 + `diag.log` |
 
@@ -312,6 +317,55 @@
     放开后剪贴板仍是占住前那句（失败不污染剪贴板）。截图 `05…`、`06…`。
   · 其它行为未受影响：状态栏计时照常走（截图 0:00:08 → 0:00:50 → 0:01:45）；
     `Ctrl+Alt+Z` 仍推进（栏底第 1/5 句 → 第 2/5 句）。
+
+## 8.7 交接验收记录（2026-11-19，T-a451712a：译文批注）
+
+- **要的东西**：译文渲染视图里选中文字就能加批注；批注处正文有看得见的标记
+  （橙色虚线下划线 + 极浅底），鼠标悬停直接把批注正文显示出来；能改、能删；
+  关掉重开、切栏、改字号、滚动之后批注仍钉在原来那几个字上。
+- **不碰的东西**（硬约束）：只新增 `<项目根>\.yitai\annotations.json`；
+  `project.json` / `progress.json` / `panes.json` / `worktime.json` 结构与 `translations\*.md` 正文一字不动；
+  不引入第三方依赖；导出 / 共享 / 云同步一律不做。
+- **锚点怎么钉**：批注存 `FileKey`（`rel:…` 或 `abs:…`）+ 归一化字符偏移 `[Start,End)` + `Quote`。
+  读档时先原位校验（该区间文字是否仍等于 `Quote`）；不等就在 ±600 字窗口内找同一段文字就近回贴；
+  仍找不到就标成"未定位"，**绝不硬贴到别的文字上**。偏移坐标系与进度高亮、`Run.Tag` 同一套
+  （`\n` 归一化后的源文档偏移），所以 `Navigation`/切句的既有口径不受影响。
+- **怎么画**：新增 `AnnotationRender.Apply` 在 `MdRender.Build` 之后把区间包成 `Span`（`Tag="ann:<id>"`），
+  样式是橙色（`#C2410C`）`Dash` 虚线（1.5px）+ 非高亮段 `#30` 极浅底；与既有 `==高亮==` 重叠时
+  **只画下划线、不铺底**——两片半透明色不叠脏，高亮的粉底还看得见。`ToolTip` 就是批注正文本身。
+  改的是渲染文档，**不碰译文正文**：冒烟断言里有一条专门比"画批注前后纯文本逐字相同"。
+- **入口**：译文栏头新增「批注 N」按钮（`BtnAnnotate`）开「本页批注」窗（每条带 定位 / 改 / 删）；
+  译文预览与对照栏里对选中文字右键 →「为选中文字加批注…」，落在批注上右键 →「改这条批注…」「删这条批注」；
+  对话框多行输入，`Ctrl+Enter` 保存、`Esc` 取消，空正文有明确拦截（「批注正文不能是空的。」）。
+- **测试**：**299 → 336 项**（第 25 节 37 条：缺文件/坏 JSON 当空表、原子写先 `.tmp` 再 move、
+  中文不转义、增改删往返、原位命中 / 前置插字回贴 / 原文改掉后标未定位 / 两处同文取最近、
+  `rel:` 与 `abs:` 键不串、同名不同目录不串、`Slice` 与高亮切段、`OffsetAtPointer` 与 `PointerAtOffset` 互逆、
+  `Span` 的 `Tag`/`ToolTip`/虚线、重叠处不铺底、只写 `annotations.json` 等源码锚）。原有 299 条零删改零放宽。
+- **门禁**：`.\build.ps1` 退出码 0、Debug `0 个警告 / 0 个错误`、冒烟 **336 项全过**；
+  `.\build.ps1 -Release` 同样 0/0 → `dist\YiTai.exe`（59.3 MB）并打印「已同步到 D:\开源\YiTai\YiTai.exe」；
+  根 exe 62,162,628 B、mtime 2026-11-19 23:51:49、sha256 `4D7FE8AB3B97C2B8A5C4A3E3F3C876B13E697175CB6D30BF2D33E05EF891A0A2`。
+  **注意**：HEAD 仍是 `9fb4906`，这批改动尚未提交（按规矩由工程岗归口提交后再重编一次）。
+- **真机**（`%TEMP%\yitai-ann-T-a451712a` 沙箱项目 + `YITAI_CONFIG_DIR` 重定向，真实译稿与
+  `%APPDATA%\YiTai\settings.json` 未碰；沙箱译文里预置了 `==站在门口，用==` 制造"批注压着高亮"的情形）：
+  · 编辑态对照栏已见批注（`gui-02-editmode-pane.png`），切到预览后同一段字仍在（`gui-03-preview.png`）；
+  · 预览里拖选「守塔人一天爬两趟那一百」→ 右键菜单（`复制 / 为选中文字加批注… / 改这条批注… /
+    删这条批注 / 本页批注列表…`，未选中文字时加批注项呈灰）→ 对话框引文与选区一致 → 填正文保存
+    （`gui-10-dialog.png`、`gui-11-dialog-filled.png`），保存后正文立即出现橙色虚线下划线与浅底，
+    `批注 2 → 3`、状态栏「已加批注（本页 3 条）」（`gui-12-added.png`）；
+  · 悬停批注：ToolTip 原文「这句太白了：礁石的尽头立着灯塔，比「灯塔立在礁石尽头」更冷一点。」
+    （`gui-13-tooltip.png`，UIA 亦读到同一句）；
+  · 「本页批注」面板列出 3 条（引文 + 正文 + 定位/改/删，`gui-14-panel.png`）→ 改第 2 条 → 引文预填正确
+    （`gui-15-edit-dialog.png`）→ 保存后面板与落盘同步（`gui-17-edited-panel.png`）→ 删同一条 → 面板剩 2 条
+    （`gui-18-deleted.png`）；
+  · 关掉重开：两条批注仍在原字上、`批注 2`（`gui-19-reopen.png`，重启后先回到编辑态再切预览）；
+  · 改字号 + 滚动：对照栏 `100% → 150% → 250%`，滚轮翻到中段，"站在门口，用"仍精确压在
+    `==高亮==` 上（`gui-22-zoom150.png`、`gui-23-scrolled.png`）；
+  · 切栏：预览 ⇄ 回到编辑来回切，批注不丢（`gui-24-backtoedit.png`、`gui-25-previewback.png`）；
+  · 旧项目兼容：拿没有任何 `.yitai\annotations.json` 的原样副本打开，正常显示、`批注` 按钮无计数、
+    **不会凭空创建 annotations.json**（`gui-26-oldproject.png`）。
+- **已知边界**（别当 bug 提）：批注只在能选中文字的渲染视图里加（译文编辑态的 `TextBox` 里没有）；
+  `==` 标记本身被选中时会落在标记字符上；原文删掉那一句后批注会在面板里显示"未定位"而不是消失；
+  批注不做导出/共享，也不进 `project.json`。
 
 ## 9. 需要人拍板的事
 
