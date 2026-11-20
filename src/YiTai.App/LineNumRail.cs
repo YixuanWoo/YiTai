@@ -51,7 +51,9 @@ public sealed class LineNumRail
     public LineNumRail(Canvas canvas)
     {
         _canvas = canvas;
-        _canvas.ClipToBounds = true;
+        // 号码的 Canvas.Top 是"内容坐标"（整篇稿子的 Y，可能是几千像素），靠 RenderTransform 平移
+        // 到视口里。Canvas 自己的 ClipToBounds 是按**局部**坐标裁的，会把视口外的号连同视口内的
+        // 号一起裁掉（平移发生在裁剪之后）——所以这里绝不开，裁剪交给外面那层 Border。
         _canvas.RenderTransform = _shift;
     }
 
@@ -108,6 +110,23 @@ public sealed class LineNumRail
         }
 
         Sync();
+    }
+
+    /// <summary>
+    /// 已摆好的号码是否真的盖得住这段视口。盖不住（例如稿子变长、栏位变窄、号码是上一版
+    /// 排版量出来的）就说明位置已经过期，调用方应当重建而不是平移 —— 这是"行号整体错位
+    /// 或滚到后面干脆没有号码"的自愈入口。
+    /// </summary>
+    public bool Covers(double offset, double viewport)
+    {
+        if (_rows.Count == 0 || viewport <= 0) return false;
+
+        var first = _rows[0];
+        var last = _rows[_rows.Count - 1];
+
+        if (first.Y > offset + 2) return false;                     // 上面还缺一段
+        if (last.Y + last.Height < offset + viewport - 2) return false; // 下面还缺一段
+        return true;
     }
 
     /// <summary>按当前偏移摆出视口附近的那一段号码。</summary>

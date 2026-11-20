@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **373 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **378 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -437,17 +437,18 @@
   本轮在 `RefreshPreview()` 末尾补 `QueuePreviewLineNumbers()`，于是角标、浅底虚线、行号
   同帧出现，仍停在预览页（按钮仍是「回到编辑」）。注意加批注窗的保存键是「保存（Ctrl+Enter）」，
   单发 `Enter` 只换行。
-- **测试**：**355 → 373 项**（第 27 节 18 条：LineMap 归一化/行首 0/5/10/15、偏移→行号、
+- **测试**：**355 → 378 项**（第 27 节 23 条：LineMap 归一化/行首 0/5/10/15、偏移→行号、
   折行不另编号、空行各占一号、越界不炸、预览段锚反查 1/2/3，以及源码锚——编辑页位置来自
   `GetRectFromCharacterIndex` 且不再出现 `ViewportWidth - 1`、预览走 `LineMap.LineOfOffset`、
   滚动只 `ScrollTo` 平移、行号层是 `Canvas` + `Canvas.SetTop(t, row.Y)`、`DocBox` 口径未改、
   两套行号栏都在、`PreviewDoc` 只在第 1 列、角标 `Run("◆")` + `Tag="annbadge"` +
-  `badge.ToolTip`、`Tag` 不是 `slice.End`）。原有 355 条一条没删、没放宽。
+  `badge.ToolTip`、`Tag` 不是 `slice.End`、量之前先 `UpdateLayout()`、量不全重试 3 次、
+  滚出已摆窗口就重建、两条行号 `Canvas` 都不开 `ClipToBounds`）。原有 355 条一条没删、没放宽。
 - **门禁**：`.\build.ps1 -Release` 退出码 **0**，Debug **0 个警告 / 0 个错误**、冒烟
-  **373 项全过**；另以 `dotnet build -c Release --warnaserror` 复核 Release **0/0**；
-  `dotnet publish` 出 `dist\YiTai.exe`（59.3 MB）并打印「已同步到 D:\开源\YiTai\YiTai.exe」。
-  根 exe 62,165,365 B、mtime 2026-11-20 19:23:28、
-  sha256 `85262AEBA58A7386DA8598CBF18658776A9F43997723977A2B0E8433C1BF80F6`（与 `dist` 同字节）。
+  **378 项全过**；另以 `dotnet build -c Release --warnaserror` 复核 Release **0/0**；
+  `dotnet publish` 出 `dist\YiTai.exe`（59.3 MB）并同步根目录。
+  根 exe 62,165,562 B、mtime 2026-11-20 19:51:43、
+  sha256 `0E6BA159328F6304E845AD1F8ADD4BD5FE1DD3AF00F5DFACCDC28F2B41357D22`（与 `dist` 同字节）。
   **本轮未做任何 git 操作**，提交由工程岗归口。
 - **真机**（`%TEMP%\yitai-sandbox\proj` 沙箱项目 + `YITAI_CONFIG_DIR` 重定向；探针
   `%TEMP%\yitai-ln-probe` 读 UIA 矩形 + 逐行扫墨迹带，按"行号 Y 与正文行首 Y"的
@@ -463,6 +464,21 @@
   · 角标悬停：在第 04 行批注末尾的 `◆` 上悬停，UIA 弹出 tooltip
     「这一句的动词太轻了：爬台阶该有吃力的感觉。」（截图与 `tips` 结构化读数都留了）。
   · 批注持久：删掉进程重开沙箱项目，4 条批注、行号 1..14 全部照旧（`14`/`15` 两张图）。
+- **复查（2026-11-20 傍晚，屋主拿真项目当场验）**：在真项目（第 10 章、3 栏、译文栏约 470px）里
+  **滚过一屏后行号整栏空白**，栏顶只剩 22/23/24 三个号。查出两个真 bug，都不是"坐标算得不准"：
+  1. **行号 `Canvas` 自己开了 `ClipToBounds`**：号码的 `Canvas.Top` 是内容坐标（整篇稿子的 Y，
+     几千像素），靠 `TranslateTransform` 平移到视口里；`ClipToBounds` 按**局部**坐标裁、
+     且在平移之前生效，滚过一屏后所有号码都落在 0..视口高 之外，被整批裁掉。
+     改法：两条行号 `Canvas` 都不开裁剪，裁剪只留给外面那层 `Border`（它按平移后的坐标裁）。
+  2. **首次构建量到的是上一版布局**：窗口刚起来 / 三栏刚套上时分栏宽度还没定，
+     `GetRectFromCharacterIndex` 量到的是旧宽度的 Y；量不到的行被静默跳过，于是"只画出前 24 个号"。
+     改法：量之前先 `TbxTranslation.UpdateLayout()`；`missed > 0` 就排队重量（最多 3 次）、
+      **不发布半套号码**；滚动时用 `LineNumRail.Covers()` 判断"已摆的号盖不住视口"，盖不住就重建，
+      不再拿过期坐标平移（这条让任何原因造成的过期位置都能自愈）。
+  复测（根目录 Release exe + `%TEMP%\yitai-ch10-copy`，译文栏 470px）：首屏 1..12 与各行齐平；
+  拖滚动条到中部 25..35、再到底部 30..43，`delta 3–4`（行高 29px）；预览页滚到 30..43 同样对齐。
+  冒烟相应补 5 条源码锚（`UpdateLayout()`、缺号重试、`Covers` 自愈、两处 `Canvas` 不许
+  `ClipToBounds`），355 → **378** 项。
 - **第 10 章 29 条回归（只在 `%TEMP%` 副本上跑，真项目只读）**：29 条中 **22 条钉住**
   （14 条原位、8 条按 quote 就近回贴），**7 条未定位**。逐条核对引文后确认：这 7 条的
   `Quote`（如"对他们来说，所有人都是他的臣民""我没别的事儿了。""我，\"小王子回答，…"）

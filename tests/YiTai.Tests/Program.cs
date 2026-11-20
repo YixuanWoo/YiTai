@@ -1883,6 +1883,15 @@ if (lineNumSrc != null)
 
     Check("源码锚：滚动只平移不重算（行号不再靠抄 VerticalOffset 硬追）",
           ln.Contains("ScrollTo(e.VerticalOffset", StringComparison.Ordinal));
+
+    Check("源码锚：量坐标前先排完版（栏位刚变宽变窄时量到的是上一版布局）",
+          ln.Contains("TbxTranslation.UpdateLayout();", StringComparison.Ordinal));
+
+    Check("源码锚：量不全不发布半套号码（缺号就排队重量，最多 3 次）",
+          ln.Contains("if (missed > 0 && _editorBuildAttempt < 3)", StringComparison.Ordinal));
+
+    Check("源码锚：滚到已摆窗口外面就重建（位置过期时自愈，不拿旧坐标平移）",
+          ln.Contains("Covers(e.VerticalOffset", StringComparison.Ordinal));
 }
 
 if (railSrc != null)
@@ -1891,6 +1900,12 @@ if (railSrc != null)
     Check("源码锚：行号层是 Canvas + 平移（位置与正文同源，不再补空行）",
           rail.Contains("TranslateTransform", StringComparison.Ordinal)
           && rail.Contains("Canvas.SetTop(t, row.Y)", StringComparison.Ordinal));
+
+    // 号码的 Y 是"内容坐标"（整篇稿子的 Y），靠平移进视口；Canvas 自己按局部坐标裁剪，
+    // 一开 ClipToBounds 就会把平移后才进视口的号裁掉（滚一下就整栏空白）。
+    Check("源码锚：行号 Canvas 不自己裁剪（裁剪归父 Border，按平移后的坐标裁）",
+          !rail.Contains("_canvas.ClipToBounds = true", StringComparison.Ordinal)
+          && rail.Contains("public bool Covers(", StringComparison.Ordinal));
 }
 
 if (themeSrc != null)
@@ -1909,6 +1924,9 @@ if (annXamlSrc != null)
           && ax2.Contains("x:Name=\"PreviewLineNumCanvas\"", StringComparison.Ordinal));
     Check("源码锚：预览页不压住行号栏（PreviewDoc 只占第 1 列）",
           ax2.Contains("x:Name=\"PreviewDoc\" Grid.Column=\"1\"", StringComparison.Ordinal));
+    Check("源码锚：两条行号 Canvas 都不开 ClipToBounds（否则滚动后整栏空白）",
+          !ax2.Contains("x:Name=\"LineNumCanvas\" ClipToBounds=\"True\"", StringComparison.Ordinal)
+          && !ax2.Contains("x:Name=\"PreviewLineNumCanvas\" ClipToBounds=\"True\"", StringComparison.Ordinal));
 }
 
 if (annRenderSrc != null)

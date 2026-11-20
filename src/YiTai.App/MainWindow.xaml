@@ -171,7 +171,10 @@
                         <Border x:Name="LineNumPanel" Grid.Column="0" Width="50" ClipToBounds="True"
                                 Background="{DynamicResource BgCardAlt}"
                                 BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
-                            <Canvas x:Name="LineNumCanvas" ClipToBounds="True"/>
+                            <!-- 注意：Canvas 自己**不能**开 ClipToBounds —— 它按局部坐标裁，
+                                 号码的 Y 是"内容坐标"（几千像素），一裁就全没了；
+                                 裁剪交给外面这个 Border（它按父坐标裁，平移后正好卡住视口）。 -->
+                            <Canvas x:Name="LineNumCanvas"/>
                         </Border>
 
                         <!-- 预览页的行号栏：只有当预览可见时才亮，号码取的是同一套逻辑行号。
@@ -180,7 +183,7 @@
                                 Visibility="Collapsed"
                                 Background="{DynamicResource BgCardAlt}"
                                 BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
-                            <Canvas x:Name="PreviewLineNumCanvas" ClipToBounds="True"/>
+                            <Canvas x:Name="PreviewLineNumCanvas"/>
                         </Border>
 
                         <TextBox x:Name="TbxTranslation" Grid.Column="1" Style="{StaticResource DocBox}"

@@ -35,6 +35,8 @@ public partial class MainWindow
     private bool _lineNumbersReady;
     private bool _editorNumPending;
     private bool _previewNumPending;
+    private int _editorBuildAttempt;        // 同一次文本量不满时的重试次数
+    private int _editorBuildTextLength = -1;
 
     /// <summary>构造函数里调一次：挂上文本变化 / 尺寸变化 / 首次布局。</summary>
     private void InitLineNumbers()
@@ -42,7 +44,11 @@ public partial class MainWindow
         _editorRail = new LineNumRail(LineNumCanvas);
         _previewRail = new LineNumRail(PreviewLineNumCanvas);
 
-        TbxTranslation.TextChanged += (_, _) => QueueEditorLineNumbers();
+        TbxTranslation.TextChanged += (_, _) =>
+        {
+            _editorBuildAttempt = 0;        // 换了稿子，重试计数从头来
+            QueueEditorLineNumbers();
+        };
         TbxTranslation.SizeChanged += (_, _) => QueueEditorLineNumbers();
         TbxTranslation.Loaded += (_, _) => AttachEditorScroller();
         PreviewDoc.Loaded += (_, _) => AttachPreviewScroller();
@@ -72,6 +78,13 @@ public partial class MainWindow
         // 文本/尺寸变了以后位置是旧的，先让重建排上队，别拿旧位置平移
         if (e.ExtentHeightChange != 0) { QueueEditorLineNumbers(); return; }
 
+        // 已摆好的号码盖不住当前视口（稿子变长 / 栏位变窄 / 号码是上一版排版量的）→ 重建
+        if (!_editorRail.Covers(e.VerticalOffset, _editorScroller.ViewportHeight))
+        {
+            QueueEditorLineNumbers();
+            return;
+        }
+
         _editorRail.ScrollTo(e.VerticalOffset, _editorScroller.ViewportHeight);
     }
 
@@ -94,6 +107,11 @@ public partial class MainWindow
     {
         if (!_lineNumbersReady || _editorScroller == null || _editorRail == null) return;
 
+        // 先把排版跑到最新：窗口刚起来 / 栏位刚变宽变窄时，正文还没重排完就量坐标，
+        // 量到的会是上一版布局的 Y（或干脆量不到屏幕外的行），行号就会整体错位、后面干脆没号。
+        TbxTranslation.UpdateLayout();
+        _editorScroller.UpdateLayout();
+
         double viewport = _editorScroller.ViewportHeight;
         if (viewport <= 0) viewport = TbxTranslation.ActualHeight;
         if (viewport <= 0) return;   // 还没排出来，等下一次 SizeChanged / Loaded 再算
@@ -101,12 +119,19 @@ public partial class MainWindow
         double offset = _editorScroller.VerticalOffset;
         string raw = TbxTranslation.Text;
 
+        if (raw.Length != _editorBuildTextLength)
+        {
+            _editorBuildTextLength = raw.Length;
+            _editorBuildAttempt = 0;
+        }
+
         var rows = new List<(int Line, double Y, double Height)>();
 
         int line = 1;
         int at = 0;
         double lastY = double.NaN;
         double lastH = 0;
+        int missed = 0;
 
         while (true)
         {
@@ -134,6 +159,10 @@ public partial class MainWindow
                 lastY = y;
                 lastH = h;
             }
+            else if (at < raw.Length)
+            {
+                missed++;
+            }
 
             if (at >= raw.Length) break;
 
@@ -144,6 +173,16 @@ public partial class MainWindow
             line++;
         }
 
+        // 量不全就别发布半套号码（缺号比没有号更难看出问题）：等一次重排再量。
+        // 只重试有限次，避免极端情况下一直排队。
+        if (missed > 0 && _editorBuildAttempt < 3)
+        {
+            _editorBuildAttempt++;
+            QueueEditorLineNumbers();
+            return;
+        }
+
+        _editorBuildAttempt = 0;
         _editorRail.Build(rows, offset, viewport);
     }
 
@@ -171,6 +210,12 @@ public partial class MainWindow
         if (_previewRail == null || _previewScroller == null) return;
         if (e.ExtentHeightChange != 0) { QueuePreviewLineNumbers(); return; }
 
+        if (!_previewRail.Covers(e.VerticalOffset, _previewScroller.ViewportHeight))
+        {
+            QueuePreviewLineNumbers();
+            return;
+        }
+
         _previewRail.ScrollTo(e.VerticalOffset, _previewScroller.ViewportHeight);
     }
 
@@ -197,6 +242,9 @@ public partial class MainWindow
 
         AttachPreviewScroller();          // 第一次可见时才建出模板，这时才找得到滚动器
         if (_previewScroller == null) return;
+
+        PreviewDoc.UpdateLayout();
+        _previewScroller.UpdateLayout();
 
         double viewport = _previewScroller.ViewportHeight;
         if (viewport <= 0) viewport = PreviewDoc.ActualHeight;
