@@ -11,7 +11,7 @@
 | 依赖 | Core 零第三方依赖；App 只有 `Microsoft.Web.WebView2`（PDF 原件渲染，运行时随 Edge 安装） |
 | 分支 | `master`（CI 已上线：`build-and-test` workflow，push/PR 到 master 自动跑，见 T-13；`ci-pending` 是旧分支，不合并） |
 | 构建 | 0 警告 0 错误 |
-| 冒烟测试 | **355 项全过**（`.\build.ps1`，退出码 0） |
+| 冒烟测试 | **373 项全过**（`.\build.ps1`，退出码 0） |
 | 发布 | `.\build.ps1 -Release` → `dist\YiTai.exe`（约 60MB 单文件，自包含） |
 | 未完成 | T-15 签名、T-16 检查更新、T-17 大文件性能、T-18 英文界面（T-14 release.ps1 已完成，远端挂 Release 未接） |
 | 用户数据 | **不在仓库里**。真实译本在用户自己的项目文件夹；仓库只有 `samples\demo` |
@@ -123,6 +123,7 @@
 | `AppSettings.cs` | `%APPDATA%\YiTai\settings.json`（`YITAI_CONFIG_DIR` 可重定向） |
 | `Markdown\MdDoc.cs` / `MdParser.cs` | Markdown → 中间结构；唯一解析入口 |
 | `Text\SentenceIndex.cs` / `RangeMath.cs` / `TextStats.cs` | 切句、区间运算、字数 |
+| `Text\LineMap.cs` | 行号口径（纯函数）：`\r\n→\n` 归一化、行首下标、偏移→逻辑行号（1 起）。行号栏与预览行号共用这一份，别再各算各的 |
 | `CopyCue.cs` | 复制成功/失败的提示音（纯计算合成 16 位单声道 WAV，零依赖） |
 
 `src\YiTai.App`（只碰界面）：
@@ -132,7 +133,8 @@
 | `MainWindow.xaml.cs` | 窗口骨架、打开项目、译文切换 |
 | `MainWindow.Panes.cs` | 对照栏（资料/PDF/别的译文），只读 |
 | `MainWindow.Marker.cs` | 进度高亮：点击落线、快捷键、活动栏 |
-| `MainWindow.LineNumbers.cs` | 逻辑行号 |
+| `MainWindow.LineNumbers.cs` | 逻辑行号：编辑页按 `GetRectFromCharacterIndex` 的真 Y 坐标摆号（不问折几行），预览页按块锚点反查行号；两份共用 `Text\LineMap` |
+| `LineNumRail.cs` | 行号栏的 `Canvas` 轨道：行号池化复用、整体平移随滚动、滚出缓冲窗才重建 |
 | `Markdown\MdRender.cs` | 中间结构 → `FlowDocument`；**只有这里碰 WPF 渲染** |
 | `ProgressHighlightLayers.cs` | 底带/下划线/起笔标三层浮层 |
 | `MainWindow.CopyFeedback.cs` | 复制当前句的当场确认：浮条动画（`CopyToast`）+ 提示音播放器（`SoundPlayer`） |
@@ -405,6 +407,74 @@
     （`gui-15-release-preview.png`、`gui-16-release-tooltip.png`）。
 - **已知边界**：预览只在译文上按行成段；资料栏 / 原文仍按 Markdown 合并软换行（有意不同口径）。
   译文里"一行写半句、下一行接着写"的稿子，预览也会照样分成两行 —— 这正是编辑页看到的样子。
+
+## 8.9 交接验收记录（2026-11-20，T-1cd1d1b7：行号对齐 / 预览行号 / 批注角标）
+
+- **要的东西**：①译文栏拉窄、滚动时行号不错行；②预览页加只读行号栏，与编辑页同一逻辑行同号；
+  ③有批注处加显眼角标，悬停即显示批注正文；④预览页右键加注保存后角标立即出现、不切回编辑页；
+  ⑤批注锚定与持久不回退；并按发布流程重编根目录 exe。
+- **根因（复核属实）**：旧 `MainWindow.LineNumbers.cs` 用隐藏 `TextBlock` 估算每个逻辑行折了几行、
+  往行号里补 `\n`、再抄 `VerticalOffset` 对齐；估算宽度取 `_editorScroller.ViewportWidth - 1`，
+  **没扣 `DocBox` 的 `Padding=18,8,14,18`（左右 32px）**，所以栏一窄、长句一折行，
+  估算行数与实际行数就差一截，行号整体往上漂。
+- **改法（不问"折几行"，改问"正文在哪"）**：新增 `src\YiTai.Core\Text\LineMap.cs` 统一行号口径
+  （`\r\n→\n` 归一化、行首下标、偏移→1 起逻辑行号、末尾空行也给号、越界不炸）；
+  新增 `src\YiTai.App\LineNumRail.cs`（`Canvas` + `TranslateTransform`，行号出自池子、滚动只平移，
+  滚出 320px 缓冲窗才重建）。编辑页行号位置来自 `TextBox.GetRectFromCharacterIndex` 的**视口坐标**
+  实测（行首 X/Y 都是真的），末尾空行用"最后一行 Y + 行高"补；预览页行号由块
+  （`MdBlock` / `ListItem` / `Paragraph` 首 `Run`）的 `SourceOffset` 经 `LineMap.LineOfOffset`
+  反查，两条链路同一个号。`DocBox` 字号 15 / 行高 29 / Padding 一字未改（冒烟有源码锚钉着）。
+- **踩到的坑（都已修）**：`Canvas` 自己的 `ClipToBounds` 挡不住平移后的越界号码，必须父
+  `Border` 也裁剪（否则窗口外会飘一个"1"）；预览文档初始 `Collapsed` 时模板没建，
+  `_previewScroller` 为 null 就 return，导致首屏一个号都没有 —— 改成先 `AttachPreviewScroller()`
+  再判断，并对"刚换文档还没排完"补一次排队。
+- **批注角标**：`AnnotationRender.Apply` 用 `HashSet<string>` 保证每条批注在 slice 末尾只补一个
+  `Run("◆")`（`FontSize=10`、`BaselineAlignment=Superscript`、橙色 `AnnLine`、
+  `Tag="annbadge"`、`ToolTip=正文`）。角标 `Tag` 不是 `int`，而 `MdRender.MakeRun` /
+  `PointerAtOffset` / `OffsetAtPointer` / `HighlightRanges` 全部只认 `int Tag`，
+  所以角标不会污染偏移；`==高亮==` 会截断批注 slice、角标仍落在批注真正的末尾。
+- **预览右键加注**：确认链路本来就是"落盘 → `RefreshPreview()` → `ScrollPreviewTo`"，
+  本轮在 `RefreshPreview()` 末尾补 `QueuePreviewLineNumbers()`，于是角标、浅底虚线、行号
+  同帧出现，仍停在预览页（按钮仍是「回到编辑」）。注意加批注窗的保存键是「保存（Ctrl+Enter）」，
+  单发 `Enter` 只换行。
+- **测试**：**355 → 373 项**（第 27 节 18 条：LineMap 归一化/行首 0/5/10/15、偏移→行号、
+  折行不另编号、空行各占一号、越界不炸、预览段锚反查 1/2/3，以及源码锚——编辑页位置来自
+  `GetRectFromCharacterIndex` 且不再出现 `ViewportWidth - 1`、预览走 `LineMap.LineOfOffset`、
+  滚动只 `ScrollTo` 平移、行号层是 `Canvas` + `Canvas.SetTop(t, row.Y)`、`DocBox` 口径未改、
+  两套行号栏都在、`PreviewDoc` 只在第 1 列、角标 `Run("◆")` + `Tag="annbadge"` +
+  `badge.ToolTip`、`Tag` 不是 `slice.End`）。原有 355 条一条没删、没放宽。
+- **门禁**：`.\build.ps1 -Release` 退出码 **0**，Debug **0 个警告 / 0 个错误**、冒烟
+  **373 项全过**；另以 `dotnet build -c Release --warnaserror` 复核 Release **0/0**；
+  `dotnet publish` 出 `dist\YiTai.exe`（59.3 MB）并打印「已同步到 D:\开源\YiTai\YiTai.exe」。
+  根 exe 62,165,365 B、mtime 2026-11-20 19:23:28、
+  sha256 `85262AEBA58A7386DA8598CBF18658776A9F43997723977A2B0E8433C1BF80F6`（与 `dist` 同字节）。
+  **本轮未做任何 git 操作**，提交由工程岗归口。
+- **真机**（`%TEMP%\yitai-sandbox\proj` 沙箱项目 + `YITAI_CONFIG_DIR` 重定向；探针
+  `%TEMP%\yitai-ln-probe` 读 UIA 矩形 + 逐行扫墨迹带，按"行号 Y 与正文行首 Y"的
+  `delta` 量化对齐）：沙箱译文 120 行"每句一行"，其中 4 行预置批注。
+  · 编辑页宽栏（译文栏 755px）13 个行号 `delta 3–4`、`spread 1`；把分隔条拖到 505px 窄栏
+    后仍 `delta 3–4 / spread 1`；滚轮下滚两档、关掉重开后滚动，同样 `delta 3–4 / spread 1`
+    —— 窄栏下行距真变成 87px（=3×29，长句折三行），行号跟着走，不再错行。
+  · 预览页 14 个行号 `delta 2–4 / spread 2`，1..14 逐行递增，与编辑页同一逻辑行同号。
+  · 预览内拖选 → 右键 → 菜单里「为选中文字加批注…」`enabled=true` → 加批注窗写正文 →
+    `Ctrl+Enter` 保存 → `annotations.json` 3→4 条、状态栏「已加批注（本页 4 条）」、
+    按钮仍显示「回到编辑」（即仍在预览），新批注处浅底 + 虚线 + 角标同帧出现；再测行号
+    仍 `paired 14 / unpaired 0`。
+  · 角标悬停：在第 04 行批注末尾的 `◆` 上悬停，UIA 弹出 tooltip
+    「这一句的动词太轻了：爬台阶该有吃力的感觉。」（截图与 `tips` 结构化读数都留了）。
+  · 批注持久：删掉进程重开沙箱项目，4 条批注、行号 1..14 全部照旧（`14`/`15` 两张图）。
+- **第 10 章 29 条回归（只在 `%TEMP%` 副本上跑，真项目只读）**：29 条中 **22 条钉住**
+  （14 条原位、8 条按 quote 就近回贴），**7 条未定位**。逐条核对引文后确认：这 7 条的
+  `Quote`（如"对他们来说，所有人都是他的臣民""我没别的事儿了。""我，\"小王子回答，…"）
+  **在当前 `translations\第10章.md` 正文里根本不存在**（用户后来改过这一章的措辞，
+  现文是"对国王们来说，所有人都是臣民""我在这儿没别的事儿了。"…），属**内容漂移**，
+  不是本轮回归：`AnnotationStore.cs`（11-19 23:40）与 `AnnotationMath.cs`（11-19 23:46）
+  本轮**一个字未改**，`Normalize` / `DriftWindow` / 回贴口径全部原样。再在副本上做
+  "改正文 → 删一条 → 加一条 → 落盘重载"，条目数与锚点仍稳定（未定位数不增加）。
+  这 7 条要恢复只能重打批注（或改回原措辞），属于内容决策，不在本轮范围。
+- **已知边界**：行号只给逻辑行（软换行不另编号，与 README 口径一致）；角标落在批注末尾，
+  若批注正好结束在行尾换行处，角标会出现在下一行行首；角标是 10px 上标小菱形，
+  4K/高缩放下比正文小但仍是橙色可辨。
 
 ## 9. 需要人拍板的事
 

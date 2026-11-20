@@ -1806,6 +1806,122 @@ if (mdParserSrc != null)
           && mp.Contains("softBreakAsParagraph = false", StringComparison.Ordinal));
 }
 
+// ============================================================
+// 27. 行号口径（T-1cd1d1b7）
+// ============================================================
+// 为什么测这个：行号有两处显示（编辑页 TextBox、预览页 FlowDocument），
+// 只要两边各算一套，迟早会分家（"预览第 12 行"和"编辑第 12 行"对不上）。
+// 这里钉住三件事：
+//   ① 口径只有一条：归一化原文（\r\n→\n）的逻辑行号，从 1 起；
+//   ② 排版折出来的视觉行不另编号（同一逻辑行里任意位置都是同一个号）；
+//   ③ 预览页的每段 SourceOffset 反查出来的号，正好等于编辑页的行序。
+
+string normText = LineMap.Normalize("第一句。\r\n第二句。\r\n第三句。\r\n");
+Check("行号口径：\r\n 归一成 \n，行数与行首一致",
+      normText == "第一句。\n第二句。\n第三句。\n" && LineMap.CountLines(normText) == 4,
+      normText.Replace("\n", "\\n"));
+
+Check("行号口径：行首偏移（0 / 5 / 10 / 15）",
+      string.Join("/", LineMap.LineStarts(normText)) == "0/5/10/15",
+      string.Join("/", LineMap.LineStarts(normText)));
+
+Check("行号口径：偏移 → 行号（行首是 1 / 2 / 3，末尾空行是 4）",
+      LineMap.LineOfOffset(normText, 0) == 1
+      && LineMap.LineOfOffset(normText, 5) == 2
+      && LineMap.LineOfOffset(normText, 10) == 3
+      && LineMap.LineOfOffset(normText, 15) == 4,
+      $"{LineMap.LineOfOffset(normText, 0)}/{LineMap.LineOfOffset(normText, 5)}/{LineMap.LineOfOffset(normText, 10)}");
+
+Check("行号口径：同一逻辑行里往后数几个字，还是同一个号（折行不另编号）",
+      LineMap.LineOfOffset(normText, 1) == 1
+      && LineMap.LineOfOffset(normText, 4) == 1
+      && LineMap.LineOfOffset(normText, 9) == 2);
+
+Check("行号口径：空行各占一号，连续空行也各算一行",
+      string.Join("/", LineMap.LineStarts("甲\n\n乙\n")) == "0/2/3/5"
+      && LineMap.LineOfOffset("甲\n\n乙\n", 2) == 2,
+      string.Join("/", LineMap.LineStarts("甲\n\n乙\n")));
+
+Check("行号口径：越界/负数不炸（负数给 1、超长给最后一行）",
+      LineMap.LineOfOffset(normText, -3) == 1
+      && LineMap.LineOfOffset(normText, 9999) == 4);
+
+// 预览段锚 → 行号，必须与编辑页逐行对上（末尾那个空行预览里没有内容，不给号）
+var numByLine = MdParser.Parse(normText, true);
+Check("预览段锚反查行号 = 编辑页行序（1/2/3）",
+      string.Join("/", numByLine.Blocks.Select(b => LineMap.LineOfOffset(normText, b.SourceOffset))) == "1/2/3",
+      string.Join("/", numByLine.Blocks.Select(b => LineMap.LineOfOffset(normText, b.SourceOffset))));
+
+string longLine = new string('长', 60) + "。";
+string wrapText = LineMap.Normalize($"短行\r\n{longLine}\r\n最后一行\r\n");
+var wrapLines = MdParser.Parse(wrapText, true);
+Check("窄栏折行的长句仍只有一个号（不按像素切行）",
+      string.Join("/", wrapLines.Blocks.Select(b => LineMap.LineOfOffset(wrapText, b.SourceOffset))) == "1/2/3"
+      && LineMap.LineOfOffset(wrapText, 1) == 1,
+      string.Join("/", wrapLines.Blocks.Select(b => LineMap.LineOfOffset(wrapText, b.SourceOffset))));
+
+// ---- 源码锚：两处行号共用一套口径、位置来自正文真实排版 ----
+string? lineMapSrc = FindUp("src\\YiTai.Core\\Text\\LineMap.cs");
+string? lineNumSrc = FindUp("src\\YiTai.App\\MainWindow.LineNumbers.cs");
+string? railSrc = FindUp("src\\YiTai.App\\LineNumRail.cs");
+string? themeSrc = FindUp("src\\YiTai.App\\Theme.xaml");
+
+Check("LineMap.cs / MainWindow.LineNumbers.cs / LineNumRail.cs 都在",
+      lineMapSrc != null && lineNumSrc != null && railSrc != null && themeSrc != null);
+
+if (lineNumSrc != null)
+{
+    string ln = File.ReadAllText(lineNumSrc);
+
+    Check("源码锚：编辑页行号位置来自正文实测（GetRectFromCharacterIndex），不是自己估折行",
+          ln.Contains("GetRectFromCharacterIndex(", StringComparison.Ordinal)
+          && !ln.Contains("ViewportWidth - 1", StringComparison.Ordinal));
+
+    Check("源码锚：预览页行号由段锚反查（LineMap.LineOfOffset），与编辑页同号",
+          ln.Contains("LineMap.LineOfOffset(text, anchor)", StringComparison.Ordinal)
+          && ln.Contains("GetCharacterRect(LogicalDirection.Forward)", StringComparison.Ordinal));
+
+    Check("源码锚：滚动只平移不重算（行号不再靠抄 VerticalOffset 硬追）",
+          ln.Contains("ScrollTo(e.VerticalOffset", StringComparison.Ordinal));
+}
+
+if (railSrc != null)
+{
+    string rail = File.ReadAllText(railSrc);
+    Check("源码锚：行号层是 Canvas + 平移（位置与正文同源，不再补空行）",
+          rail.Contains("TranslateTransform", StringComparison.Ordinal)
+          && rail.Contains("Canvas.SetTop(t, row.Y)", StringComparison.Ordinal));
+}
+
+if (themeSrc != null)
+{
+    string th = File.ReadAllText(themeSrc);
+    Check("源码锚：没有为了对齐去改正文口径（DocBox 仍 15 号 / 行高 29 / Padding 18,8,14,18）",
+          th.Contains("<Setter Property=\"FontSize\" Value=\"15\"/>", StringComparison.Ordinal)
+          && th.Contains("<Setter Property=\"Padding\" Value=\"18,8,14,18\"/>", StringComparison.Ordinal));
+}
+
+if (annXamlSrc != null)
+{
+    string ax2 = File.ReadAllText(annXamlSrc);
+    Check("源码锚：编辑页与预览页各有一条行号栏（预览那条有自己的一套）",
+          ax2.Contains("x:Name=\"LineNumCanvas\"", StringComparison.Ordinal)
+          && ax2.Contains("x:Name=\"PreviewLineNumCanvas\"", StringComparison.Ordinal));
+    Check("源码锚：预览页不压住行号栏（PreviewDoc 只占第 1 列）",
+          ax2.Contains("x:Name=\"PreviewDoc\" Grid.Column=\"1\"", StringComparison.Ordinal));
+}
+
+if (annRenderSrc != null)
+{
+    string ar2 = File.ReadAllText(annRenderSrc);
+    Check("源码锚：批注处有橙色角标（只补一个，悬停同样给正文）",
+          ar2.Contains("Run(\"◆\")", StringComparison.Ordinal)
+          && ar2.Contains("Tag = \"annbadge\"", StringComparison.Ordinal)
+          && ar2.Contains("badge.ToolTip = body", StringComparison.Ordinal));
+    Check("源码锚：角标 Tag 不是 int（偏移反查/切句只认 int Tag，锚点不被污染）",
+          !ar2.Contains("Tag = slice.End", StringComparison.Ordinal));
+}
+
 Console.WriteLine();
 if (failed == 0) Console.WriteLine($"全部通过 ✓（{passed} 项）");else Console.WriteLine($"失败 {failed} 项 ✗（通过 {passed} 项）");
 

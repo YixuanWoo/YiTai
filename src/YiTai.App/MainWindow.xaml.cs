@@ -384,7 +384,7 @@ public partial class MainWindow : Window
         //   把"其实是一份旧稿被移走了"这件事彻底盖掉。
         _missingTrans = _doc.State != TextReadState.Ok;
         TbxTranslation.IsEnabled = !_missingTrans;
-        LineNumPanel.Visibility = Visibility.Visible;
+        LineNumPanel.Visibility = _previewing ? Visibility.Collapsed : Visibility.Visible;
         EmptyTrans.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = RelativeForDisplay(trPath);
         ShowMissingTrans(trPath);
@@ -547,6 +547,7 @@ public partial class MainWindow : Window
 
         TbxTranslation.IsEnabled = false;
         LineNumPanel.Visibility = Visibility.Collapsed;
+        PreviewLineNumPanel.Visibility = Visibility.Collapsed;
         TxtTrPath.Text = "";
         TxtEmptyTitle.Text = title;
         TxtEmptyHint.Text = hint;
@@ -725,12 +726,17 @@ public partial class MainWindow : Window
             TbxTranslation.Visibility = Visibility.Collapsed;
             LineNumPanel.Visibility = Visibility.Collapsed;
             PreviewDoc.Visibility = Visibility.Visible;
+            PreviewLineNumPanel.Visibility = Visibility.Visible;
+            QueuePreviewLineNumbers();      // 切过来之后按段摆行号（等布局完成）
             return;
         }
 
         PreviewDoc.Visibility = Visibility.Collapsed;
+        PreviewLineNumPanel.Visibility = Visibility.Collapsed;
+        _previewRail?.Clear();
         TbxTranslation.Visibility = Visibility.Visible;
         LineNumPanel.Visibility = Visibility.Visible;
+        QueueEditorLineNumbers();
         BtnPreview.Content = "预览";
     }
 
@@ -745,6 +751,7 @@ public partial class MainWindow : Window
             var doc = MdRender.Build(MdParser.Parse(TbxTranslation.Text, softBreakAsParagraph: true), MakeStyleFor(15, 1.8));
             PreviewDoc.Document = doc;
             ApplyPreviewAnnotations(doc);   // 批注包进文字里（没有批注就原样不动）
+            QueuePreviewLineNumbers();      // 换文档之后行号要重新按段摆
         }
         catch (Exception)
         {

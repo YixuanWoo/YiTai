@@ -95,24 +95,28 @@ public static class AnnotationRender
 
         var highlights = MdRender.HighlightRanges(doc);
 
+        // 角标去重：一条批注只补一个小记号（同一段文字被高亮/正文切过好几截也不会补两遍）
+        var badged = new HashSet<string>(StringComparer.Ordinal);
+
         // 先快照块集合再改：WPF 的 TextElementEnumerator 只要内容一变就会失效，
         // 边枚举边往段落里插 Span 会直接抛"集合被修改"。
         var blocks = new List<Block>(doc.Blocks.Count);
         foreach (Block b in doc.Blocks) blocks.Add(b);
 
         foreach (Block b in blocks)
-            RewriteBlock(b, anns, highlights, bodies);
+            RewriteBlock(b, anns, highlights, bodies, badged);
 
         return anns.Count;
     }
 
     private static void RewriteBlock(Block block, IReadOnlyList<(string Id, int Start, int End)> anns,
                                      IReadOnlyList<(int Start, int End)> highlights,
-                                     Dictionary<string, string> bodies)
+                                     Dictionary<string, string> bodies,
+                                     HashSet<string> badged)
     {
         if (block is Paragraph p)
         {
-            RewriteInlines(p.Inlines, anns, highlights, bodies);
+            RewriteInlines(p.Inlines, anns, highlights, bodies, badged);
         }
         else if (block is System.Windows.Documents.List list)
         {
@@ -123,7 +127,7 @@ public static class AnnotationRender
             {
                 var inner = new List<Block>(li.Blocks.Count);
                 foreach (Block b in li.Blocks) inner.Add(b);
-                foreach (Block b in inner) RewriteBlock(b, anns, highlights, bodies);
+                foreach (Block b in inner) RewriteBlock(b, anns, highlights, bodies, badged);
             }
         }
     }
@@ -135,7 +139,8 @@ public static class AnnotationRender
     private static void RewriteInlines(InlineCollection target,
                                        IReadOnlyList<(string Id, int Start, int End)> anns,
                                        IReadOnlyList<(int Start, int End)> highlights,
-                                       Dictionary<string, string> bodies)
+                                       Dictionary<string, string> bodies,
+                                       HashSet<string> badged)
     {
         if (target.Count == 0) return;
 
@@ -149,7 +154,7 @@ public static class AnnotationRender
         {
             if (child is Run run)
             {
-                var nodes = BuildRun(run, anns, highlights, bodies);
+                var nodes = BuildRun(run, anns, highlights, bodies, badged);
                 if (nodes != null)
                 {
                     changed = true;
@@ -162,7 +167,7 @@ public static class AnnotationRender
             }
             else if (child is Span span)
             {
-                RewriteInlines(span.Inlines, anns, highlights, bodies);
+                RewriteInlines(span.Inlines, anns, highlights, bodies, badged);
                 rebuilt.Add(span);
             }
             else
@@ -181,7 +186,8 @@ public static class AnnotationRender
     private static List<Inline>? BuildRun(Run run,
                                           IReadOnlyList<(string Id, int Start, int End)> anns,
                                           IReadOnlyList<(int Start, int End)> highlights,
-                                          Dictionary<string, string> bodies)
+                                          Dictionary<string, string> bodies,
+                                          HashSet<string> badged)
     {
         if (run.Tag is not int start) return null;
 
@@ -230,9 +236,48 @@ public static class AnnotationRender
             }
 
             nodes.Add(node);
+
+            // 角标：这条批注在正文里到这一截就结束了 → 紧跟一个橙色小记号，
+            // 光有虚线+极浅底在密密麻麻的中文里还是不够显眼（董事会要"角标"）。
+            // 记号自己的 Tag 故意用字符串：偏移反查、切句、高亮都只认 int Tag，
+            // 多出来的这个字形绝不会被算进任何锚点。
+            if (slice.HasAnnotation)
+            {
+                foreach (string id in slice.ItemIds)
+                {
+                    if (EndOfAnnotation(anns, id) != slice.End) continue;
+                    if (!badged.Add(id)) continue;
+                    nodes.Add(MakeBadge(bodies, id));
+                }
+            }
         }
 
         return nodes;
+    }
+
+    private static int EndOfAnnotation(IReadOnlyList<(string Id, int Start, int End)> anns, string id)
+    {
+        foreach (var a in anns)
+            if (a.Id == id) return a.End;
+        return -1;
+    }
+
+    /// <summary>橙色小菱形角标：悬停同样弹出批注正文，不用去点「批注」按钮。</summary>
+    private static Run MakeBadge(Dictionary<string, string> bodies, string id)
+    {
+        var badge = new Run("◆")
+        {
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            BaselineAlignment = BaselineAlignment.Superscript,
+            Foreground = AnnLine,
+            Tag = "annbadge",
+        };
+
+        if (bodies.TryGetValue(id, out string? body) && body.Length > 0)
+            badge.ToolTip = body;
+
+        return badge;
     }
 
     /// <summary>从文本位置往上找"这是哪条批注"（命中测试用）。没有就返回空串。</summary>

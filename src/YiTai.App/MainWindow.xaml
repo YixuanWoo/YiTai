@@ -165,18 +165,28 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <!-- 行号栏：像代码编辑器一样，钉在译文左侧，只读、不抢焦点 -->
-                        <Border x:Name="LineNumPanel" Grid.Column="0"
+                        <!-- 行号栏：像代码编辑器一样，钉在译文左侧，只读、不抢焦点。
+                             里面的数字由代码按"正文每一行实际的 Y"摆上去（LineNumRail.cs），
+                             不再靠补空行估算折行 —— 栏拉窄、滚动时都不会再和正文错开。 -->
+                        <Border x:Name="LineNumPanel" Grid.Column="0" Width="50" ClipToBounds="True"
                                 Background="{DynamicResource BgCardAlt}"
                                 BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
-                            <TextBox x:Name="LineNumGutter" Style="{StaticResource LineNumBox}"
-                                     VerticalAlignment="Stretch"/>
+                            <Canvas x:Name="LineNumCanvas" ClipToBounds="True"/>
+                        </Border>
+
+                        <!-- 预览页的行号栏：只有当预览可见时才亮，号码取的是同一套逻辑行号。
+                             它和预览共用左右同一片位置（同高、同顶），滚动时随预览一起走。 -->
+                        <Border x:Name="PreviewLineNumPanel" Grid.Column="0" Width="50" ClipToBounds="True"
+                                Visibility="Collapsed"
+                                Background="{DynamicResource BgCardAlt}"
+                                BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
+                            <Canvas x:Name="PreviewLineNumCanvas" ClipToBounds="True"/>
                         </Border>
 
                         <TextBox x:Name="TbxTranslation" Grid.Column="1" Style="{StaticResource DocBox}"
                                  IsEnabled="False" TextChanged="OnTranslationChanged"
                                  SelectionChanged="OnTranslationSelectionChanged"/>
-                        <FlowDocumentScrollViewer x:Name="PreviewDoc" Grid.Column="0" Grid.ColumnSpan="2"
+                        <FlowDocumentScrollViewer x:Name="PreviewDoc" Grid.Column="1"
                                                   Visibility="Collapsed"
                                                   IsToolBarVisible="False" IsSelectionEnabled="True"
                                                   Background="{DynamicResource BgCard}"
